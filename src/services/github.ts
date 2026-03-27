@@ -2,9 +2,11 @@ import axios, { type AxiosInstance } from "axios";
 
 import type { AppConfig } from "../config.js";
 import type { PullRequestInfo, ValidationResult } from "../types.js";
+import { Logger } from "../utils/logger.js";
 
 export class GitHubService {
   private readonly client: AxiosInstance;
+  private readonly logger = new Logger("github");
 
   constructor(private readonly config: AppConfig) {
     this.client = axios.create({
@@ -26,6 +28,13 @@ export class GitHubService {
     summaryOfChanges: string;
     validation: ValidationResult;
   }): Promise<PullRequestInfo> {
+    this.logger.info("Creating draft GitHub pull request", {
+      owner: this.config.GITHUB_OWNER,
+      repo: this.config.GITHUB_REPO,
+      branchName: input.branchName,
+      baseBranch: this.config.GIT_BASE_BRANCH
+    });
+
     const body = buildPullRequestBody(input);
     const response = await this.client.post<{
       number: number;
@@ -36,6 +45,11 @@ export class GitHubService {
       base: this.config.GIT_BASE_BRANCH,
       body,
       draft: true
+    });
+
+    this.logger.info("Draft pull request created", {
+      number: response.data.number,
+      url: response.data.html_url
     });
 
     return {

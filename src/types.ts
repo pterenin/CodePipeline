@@ -3,6 +3,7 @@ export interface JiraTicket {
   summary: string;
   description: string;
   acceptanceCriteria?: string;
+  recentHumanComments?: string[];
   url: string;
 }
 
@@ -26,6 +27,11 @@ export interface AgentRunResult {
   summary: string;
   reason?: string;
   changedFiles: string[];
+}
+
+export interface AgentFileEdit {
+  path: string;
+  content: string;
 }
 
 export interface PullRequestInfo {
@@ -57,14 +63,30 @@ export interface RepositoryContextFile {
   content: string;
 }
 
+export interface RepositorySearchResult {
+  query: string;
+  matches: string[];
+}
+
 export interface RepositoryContext {
   topLevelEntries: string[];
+  fileCatalog: string[];
+  discoveryQueries: string[];
+  searchResults: RepositorySearchResult[];
   selectedFiles: RepositoryContextFile[];
 }
 
-export interface AgentPatchResponse {
-  decision: "apply_patch" | "needs_human_review";
+export interface AgentChangeResponse {
+  decision: "apply_changes" | "needs_human_review";
   summary: string;
   reason?: string;
-  patch?: string;
+  files?: AgentFileEdit[];
+}
+
+export interface AgentContextRequestResponse {
+  decision: "request_more_context" | "apply_changes" | "needs_human_review";
+  summary: string;
+  reason?: string;
+  files?: AgentFileEdit[] | string[];
+  queries?: string[];
 }

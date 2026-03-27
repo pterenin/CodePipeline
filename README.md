@@ -1,6 +1,6 @@
 # Jira AI Worker
 
-`jira-ai-worker` is a conservative Node.js + TypeScript service that pulls one Jira issue at a time from a configured queue, prepares an isolated git workspace, asks an OpenAI-backed agent to make the smallest reasonable code change, validates the result, and opens a draft GitHub pull request when the run succeeds.
+`jira-ai-worker` is a conservative Node.js + TypeScript service that pulls one Jira issue at a time from a configured queue, prepares an isolated git worktree from a persistent local mirror, asks an OpenAI-backed agent to make the smallest reasonable code change, validates the result, and opens a draft GitHub pull request when the run succeeds.
 
 The first version is intentionally cautious:
 
@@ -66,13 +66,19 @@ npm run dev
 
 - `PORT`: HTTP port for the Express server.
 - `LOG_LEVEL`: Simple log label for local runs.
+- `POLL_ENABLED`: Set to `true` to make the service check Jira automatically in the background.
+- `POLL_INTERVAL_MS`: Polling interval in milliseconds when automatic polling is enabled.
 
 ### Jira
 
 - `JIRA_BASE_URL`: Jira base URL, such as `https://company.atlassian.net`.
 - `JIRA_EMAIL`: Jira user email for basic auth.
 - `JIRA_API_TOKEN`: Jira API token.
-- `JIRA_JQL`: JQL filter for automation-ready tickets.
+- `JIRA_PROJECT_KEY`: Simpler project-based queue configuration if you do not want to provide a full JQL string.
+- `JIRA_QUEUE_LABEL`: Optional label filter used with `JIRA_PROJECT_KEY`. Defaults to `ai-ready`.
+- `JIRA_QUEUE_STATUS`: Optional status filter used with `JIRA_PROJECT_KEY`.
+- `JIRA_JQL`: Optional full JQL override. If set, it takes precedence over the project-based settings.
+  The service still automatically excludes tickets already labeled `ai-done`.
 
 ### GitHub
 
@@ -85,14 +91,17 @@ npm run dev
 
 - `GIT_REMOTE_URL`: Git clone URL for the target repository.
 - `GIT_BASE_BRANCH`: Base branch to branch from and target in pull requests.
-- `WORK_ROOT`: Root directory where isolated working clones are created.
+- `WORK_ROOT`: Root directory where the persistent repo mirror and per-ticket worktrees are created.
 
 ### OpenAI
 
 - `OPENAI_API_KEY`: API key for the coding agent.
 - `OPENAI_MODEL`: Model name used for implementation and repair prompts.
-- `OPENAI_MAX_CONTEXT_FILES`: Number of repository files to include in prompts.
+- `OPENAI_MAX_CONTEXT_FILES`: Max number of repository files that can be loaded into active model context at once.
 - `OPENAI_MAX_FILE_BYTES`: Max bytes per file snippet sent to the model.
+- `OPENAI_CONTEXT_ROUNDS`: Number of iterative context-request rounds allowed before the agent must decide.
+- `OPENAI_MAX_SEARCH_RESULTS`: Max number of `rg` discovery matches stored per query.
+- `VALIDATION_REPAIR_ATTEMPTS`: Max number of automated repair attempts after validation failures. Defaults to `5`.
 
 ## API
 
@@ -106,7 +115,7 @@ Returns:
 
 ### `POST /run-next`
 
-Triggers one serialized processing attempt for the next Jira issue that matches the configured JQL.
+Triggers one serialized processing attempt for the next Jira issue that matches the configured Jira queue filter.
 
 Example response:
 
@@ -126,29 +135,31 @@ If a run is already active, the endpoint returns HTTP `409`.
 
 For each run, the service:
 
-1. Reads the next issue from Jira using the configured JQL.
+1. Reads the next issue from Jira using either the configured full JQL or a generated project-based queue query.
 2. Applies safety checks for missing requirements and risky keywords.
-3. Clones the target repository into a fresh working directory.
+3. Refreshes a persistent local mirror of the target repository and creates a fresh per-ticket git worktree.
 4. Creates a branch named `ai/JIRA-123-short-slug`.
-5. Builds lightweight repository context and asks the OpenAI agent for a minimal patch.
+5. Uses `rg`-based repository discovery, loads an initial focused context, and lets the OpenAI agent request more files in multiple rounds before producing a patch.
 6. Runs validation commands in order:
    - `npm ci`
    - `npm run lint`
    - `npm run typecheck`
    - `npm test -- --runInBand`
-7. If validation fails, performs one repair attempt with validation output.
+7. If validation fails, performs up to the configured number of repair attempts with validation output.
 8. Commits and pushes the branch if files changed.
 9. Creates a draft GitHub pull request.
-10. Comments back to Jira with the PR link or failure outcome.
+10. Comments back to Jira with the PR link or failure outcome, and labels successful tickets with `ai-done`.
 
 ## Notes on the Agent
 
 The agent layer is intentionally modular. Today it:
 
-- gathers a small repository snapshot
-- asks the model for either a unified diff patch or a human-review decision
-- applies the patch locally with `git apply`
-- performs one repair pass if validation fails
+- runs repository discovery with `rg --files` and targeted search terms from the Jira ticket
+- gathers a focused initial snapshot instead of a simple fixed traversal
+- lets the model request additional files dynamically in multiple rounds
+- asks the model for either more context, direct file edits, or a human-review decision
+- writes the returned file changes directly into the isolated worktree
+- performs repeated repair passes if validation fails, up to the configured limit
 
 You can replace the prompt strategy, the model, or the patch application mechanism later without changing Jira, GitHub, validation, or worker orchestration.
 
@@ -166,6 +177,9 @@ Start the server:
 ```bash
 npm run dev
 ```
+
+If `POLL_ENABLED=true`, the service will automatically check Jira on startup and then every `POLL_INTERVAL_MS`.
+If `POLL_ENABLED=false`, nothing runs until you call `POST /run-next`.
 
 Trigger a run:
 

@@ -1,7 +1,9 @@
 import axios from "axios";
+import { Logger } from "../utils/logger.js";
 export class GitHubService {
     config;
     client;
+    logger = new Logger("github");
     constructor(config) {
         this.config = config;
         this.client = axios.create({
@@ -15,6 +17,12 @@ export class GitHubService {
         });
     }
     async createDraftPullRequest(input) {
+        this.logger.info("Creating draft GitHub pull request", {
+            owner: this.config.GITHUB_OWNER,
+            repo: this.config.GITHUB_REPO,
+            branchName: input.branchName,
+            baseBranch: this.config.GIT_BASE_BRANCH
+        });
         const body = buildPullRequestBody(input);
         const response = await this.client.post(`/repos/${this.config.GITHUB_OWNER}/${this.config.GITHUB_REPO}/pulls`, {
             title: input.title,
@@ -22,6 +30,10 @@ export class GitHubService {
             base: this.config.GIT_BASE_BRANCH,
             body,
             draft: true
+        });
+        this.logger.info("Draft pull request created", {
+            number: response.data.number,
+            url: response.data.html_url
         });
         return {
             number: response.data.number,
