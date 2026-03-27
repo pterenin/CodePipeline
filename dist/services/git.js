@@ -129,15 +129,16 @@ export class GitService {
         });
     }
     async listRemoteBranches(mirrorPath) {
-        const branchResult = await execa("git", ["branch", "-r", "--format=%(refname:short)"], {
+        const branchResult = await execa("git", ["ls-remote", "--heads", "origin"], {
             cwd: mirrorPath
         });
         return new Set(branchResult.stdout
             .split("\n")
             .map((line) => line.trim())
             .filter(Boolean)
-            .filter((line) => line.startsWith("origin/"))
-            .map((line) => line.replace(/^origin\//, "")));
+            .map((line) => line.split("\t")[1] ?? "")
+            .filter((line) => line.startsWith("refs/heads/"))
+            .map((line) => line.replace(/^refs\/heads\//, "")));
     }
 }
 function parseWorktreeList(stdout) {

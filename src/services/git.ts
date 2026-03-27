@@ -166,7 +166,7 @@ export class GitService {
   }
 
   private async listRemoteBranches(mirrorPath: string): Promise<Set<string>> {
-    const branchResult = await execa("git", ["branch", "-r", "--format=%(refname:short)"], {
+    const branchResult = await execa("git", ["ls-remote", "--heads", "origin"], {
       cwd: mirrorPath
     });
 
@@ -175,8 +175,9 @@ export class GitService {
         .split("\n")
         .map((line) => line.trim())
         .filter(Boolean)
-        .filter((line) => line.startsWith("origin/"))
-        .map((line) => line.replace(/^origin\//, ""))
+        .map((line) => line.split("\t")[1] ?? "")
+        .filter((line) => line.startsWith("refs/heads/"))
+        .map((line) => line.replace(/^refs\/heads\//, ""))
     );
   }
 }

@@ -11,7 +11,7 @@ import type {
   AgentRunResult,
   JiraTicket,
   RepositoryContext,
-  ValidationResult
+  ValidationResult,
 } from "../types.js";
 import { collectRepositoryContext, loadFilesByPath } from "../utils/files.js";
 import { Logger } from "../utils/logger.js";
@@ -25,17 +25,20 @@ export class AgentService {
     this.client = new OpenAI({ apiKey: config.OPENAI_API_KEY });
   }
 
-  async implementTicket(ticket: JiraTicket, repoPath: string): Promise<AgentRunResult> {
+  async implementTicket(
+    ticket: JiraTicket,
+    repoPath: string,
+  ): Promise<AgentRunResult> {
     this.logger.info("Starting implementation pass", {
       ticketKey: ticket.key,
-      repoPath
+      repoPath,
     });
     const context = await this.loadContext(repoPath, ticket);
     const response = await this.requestChangesWithDiscovery({
       ticket,
       repoPath,
       context,
-      mode: "implementation"
+      mode: "implementation",
     });
 
     return this.applyChangeResponse(repoPath, response);
@@ -44,11 +47,11 @@ export class AgentService {
   async repairFromValidation(
     ticket: JiraTicket,
     repoPath: string,
-    validation: ValidationResult
+    validation: ValidationResult,
   ): Promise<AgentRunResult> {
     this.logger.info("Starting repair pass", {
       ticketKey: ticket.key,
-      repoPath
+      repoPath,
     });
     const context = await this.loadContext(repoPath, ticket);
     const response = await this.requestChangesWithDiscovery({
@@ -56,26 +59,28 @@ export class AgentService {
       repoPath,
       context,
       mode: "repair",
-      validation
+      validation,
     });
 
     return this.applyChangeResponse(repoPath, response);
   }
 
-  private async loadContext(repoPath: string, ticket: JiraTicket): Promise<RepositoryContext> {
+  private async loadContext(
+    repoPath: string,
+    ticket: JiraTicket,
+  ): Promise<RepositoryContext> {
     const context = await collectRepositoryContext(
       repoPath,
       this.config.OPENAI_MAX_CONTEXT_FILES,
       this.config.OPENAI_MAX_FILE_BYTES,
       this.config.OPENAI_MAX_SEARCH_RESULTS,
-      `${ticket.summary}\n${ticket.description}\n${ticket.acceptanceCriteria ?? ""}`
+      `${ticket.summary}\n${ticket.description}\n${ticket.acceptanceCriteria ?? ""}`,
     );
 
     this.logger.info("Loaded initial repository context", {
       topLevelEntries: context.topLevelEntries.length,
       catalogFiles: context.fileCatalog.length,
       searchQueries: context.discoveryQueries,
-      loadedFiles: context.selectedFiles.map((file) => file.path)
     });
 
     return context;
@@ -90,41 +95,48 @@ export class AgentService {
   }): Promise<AgentChangeResponse> {
     let currentContext = input.context;
 
-    for (let round = 1; round <= this.config.OPENAI_CONTEXT_ROUNDS; round += 1) {
+    for (
+      let round = 1;
+      round <= this.config.OPENAI_CONTEXT_ROUNDS;
+      round += 1
+    ) {
       this.logger.info("Requesting agent decision", {
         mode: input.mode,
         round,
-        loadedFiles: currentContext.selectedFiles.map((file) => file.path)
       });
 
       const response = await this.requestAgentDecision({
         ...input,
         context: currentContext,
         round,
-        maxRounds: this.config.OPENAI_CONTEXT_ROUNDS
+        maxRounds: this.config.OPENAI_CONTEXT_ROUNDS,
       });
 
       if (response.decision !== "request_more_context") {
         this.logger.info("Agent returned final decision", {
           decision: response.decision,
-          summary: response.summary
+          summary: response.summary,
         });
 
         const normalizedFiles =
-          response.decision === "apply_changes" ? normalizeFileEdits(response.files) : undefined;
+          response.decision === "apply_changes"
+            ? normalizeFileEdits(response.files)
+            : undefined;
 
         return {
           decision: response.decision,
           summary: response.summary,
           ...(response.reason ? { reason: response.reason } : {}),
-          ...(normalizedFiles ? { files: normalizedFiles } : {})
+          ...(normalizedFiles ? { files: normalizedFiles } : {}),
         };
       }
 
-      const requestedPaths = (response.files ?? []).filter((item): item is string => typeof item === "string");
+      const requestedPaths = (response.files ?? []).filter(
+        (item): item is string => typeof item === "string",
+      );
       this.logger.info("Agent requested more context", {
         requestedFiles: requestedPaths,
-        requestedQueries: response.queries ?? []
+        requestedQueries: response.queries ?? [],
       });
 
       const matchedFiles = currentContext.searchResults
@@ -135,31 +147,39 @@ export class AgentService {
         input.repoPath,
         [...requestedPaths, ...matchedFiles],
         this.config.OPENAI_MAX_CONTEXT_FILES,
-        this.config.OPENAI_MAX_FILE_BYTES
+        this.config.OPENAI_MAX_FILE_BYTES,
       );
 
       if (extraFiles.length === 0) {
-        this.logger.warn("Agent requested additional context but no files could be loaded");
+        this.logger.warn(
+          "Agent requested additional context but no files could be loaded",
+        );
         return {
           decision: "needs_human_review",
           summary: response.summary,
-          reason: "The agent requested additional context, but no matching files could be loaded safely."
+          reason:
+            "The agent requested additional context, but no matching files could be loaded safely.",
         };
       }
 
       const requestedPathSet = new Set(extraFiles.map((file) => file.path));
       const prioritizedFiles = [
         ...extraFiles,
-        ...currentContext.selectedFiles.filter((file) => !requestedPathSet.has(file.path))
+        ...currentContext.selectedFiles.filter(
+          (file) => !requestedPathSet.has(file.path),
+        ),
       ];
 
       currentContext = {
         ...currentContext,
-        selectedFiles: prioritizedFiles.slice(0, this.config.OPENAI_MAX_CONTEXT_FILES)
+        selectedFiles: prioritizedFiles.slice(
+          0,
+          this.config.OPENAI_MAX_CONTEXT_FILES,
+        ),
       };
 
       this.logger.info("Expanded active context", {
-        loadedFiles: currentContext.selectedFiles.map((file) => file.path)
+        loadedFiles: currentContext.selectedFiles.map((file) => file.path),
       });
     }
 
@@ -167,7 +187,8 @@ export class AgentService {
     return {
       decision: "needs_human_review",
       summary: "Context gathering limit reached.",
-      reason: "The agent requested more context than allowed by the configured round limit."
+      reason:
+        "The agent requested more context than allowed by the configured round limit.",
     };
   }
 
@@ -184,11 +205,11 @@ export class AgentService {
     this.logger.info("Sending prompt to OpenAI", {
       mode: input.mode,
       round: input.round,
-      model: this.config.OPENAI_MODEL
+      model: this.config.OPENAI_MODEL,
     });
     const response = await this.client.responses.create({
       model: this.config.OPENAI_MODEL,
-      input: prompt
+      input: prompt,
     });
 
     const text = response.output_text;
@@ -199,23 +220,26 @@ export class AgentService {
       return {
         decision: "needs_human_review",
         summary: "Model response was not parseable as a change instruction.",
-        reason: truncate(text || "(empty response)", 1000)
+        reason: truncate(text || "(empty response)", 1000),
       };
     }
 
     return parsed;
   }
 
-  private async applyChangeResponse(repoPath: string, response: AgentChangeResponse): Promise<AgentRunResult> {
+  private async applyChangeResponse(
+    repoPath: string,
+    response: AgentChangeResponse,
+  ): Promise<AgentRunResult> {
     if (response.decision === "needs_human_review") {
       this.logger.warn("Agent requested human review", {
-        summary: response.summary
+        summary: response.summary,
       });
       return {
         decision: "needs_human_review",
         summary: response.summary,
         ...(response.reason ? { reason: response.reason } : {}),
-        changedFiles: []
+        changedFiles: [],
       };
     }
 
@@ -226,12 +250,12 @@ export class AgentService {
         decision: "no_changes",
         summary: response.summary,
         reason: "Model returned no file edits.",
-        changedFiles: []
+        changedFiles: [],
       };
     }
 
     this.logger.info("Applying agent file edits", {
-      files: fileEdits.map((file) => file.path)
+      files: fileEdits.map((file) => file.path),
     });
 
     const changedFiles: string[] = [];
@@ -242,7 +266,7 @@ export class AgentService {
           decision: "needs_human_review",
           summary: response.summary,
           reason: `Model returned an unsafe file path: ${fileEdit.path}`,
-          changedFiles: []
+          changedFiles: [],
         };
       }
 
@@ -255,7 +279,7 @@ export class AgentService {
     return {
       decision: "applied",
       summary: response.summary,
-      changedFiles
+      changedFiles,
     };
   }
 }
@@ -284,9 +308,9 @@ function buildPrompt(input: {
           (step) =>
             `COMMAND: ${step.command}\nSUCCESS: ${step.success}\nSTDOUT:\n${truncate(
               step.stdout,
-              4000
-            )}\nSTDERR:\n${truncate(step.stderr, 4000)}`
-        )
+              4000,
+            )}\nSTDERR:\n${truncate(step.stderr, 4000)}`,
+        ),
       ].join("\n\n")
     : "";
 
@@ -333,7 +357,7 @@ function buildPrompt(input: {
     "- Return only the files you want to create or replace.",
     "- Each returned file must contain the full final content.",
     "- Keep the edit set small and conservative.",
-    "- Preserve existing style and surrounding code patterns."
+    "- Preserve existing style and surrounding code patterns.",
   ].join("\n");
 }
 
@@ -341,14 +365,24 @@ function parseAgentDecision(text: string): AgentContextRequestResponse | null {
   const normalized = text.trim();
   const candidates = [
     normalized,
-    normalized.replace(/^```json\s*/i, "").replace(/```$/, "").trim(),
-    normalized.replace(/^```\s*/i, "").replace(/```$/, "").trim()
+    normalized
+      .replace(/^```json\s*/i, "")
+      .replace(/```$/, "")
+      .trim(),
+    normalized
+      .replace(/^```\s*/i, "")
+      .replace(/```$/, "")
+      .trim(),
   ];
 
   for (const candidate of candidates) {
     try {
       const parsed = JSON.parse(candidate) as AgentContextRequestResponse;
-      if (!parsed || typeof parsed.summary !== "string" || typeof parsed.decision !== "string") {
+      if (
+        !parsed ||
+        typeof parsed.summary !== "string" ||
+        typeof parsed.decision !== "string"
+      ) {
         continue;
       }
 
@@ -369,7 +403,9 @@ function parseAgentDecision(text: string): AgentContextRequestResponse | null {
   return null;
 }
 
-function normalizeFileEdits(files: AgentContextRequestResponse["files"]): AgentFileEdit[] {
+function normalizeFileEdits(
+  files: AgentContextRequestResponse["files"],
+): AgentFileEdit[] {
   if (!Array.isArray(files)) {
     return [];
   }
@@ -378,16 +414,16 @@ function normalizeFileEdits(files: AgentContextRequestResponse["files"]): AgentF
     .filter((file): file is AgentFileEdit => {
       return Boolean(
         file &&
-          typeof file === "object" &&
-          "path" in file &&
-          "content" in file &&
-          typeof file.path === "string" &&
-          typeof file.content === "string"
+        typeof file === "object" &&
+        "path" in file &&
+        "content" in file &&
+        typeof file.path === "string" &&
+        typeof file.content === "string",
       );
     })
     .map((file) => ({
       path: file.path,
-      content: file.content
+      content: file.content,
     }));
 }
 

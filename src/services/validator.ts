@@ -6,6 +6,7 @@ import { Logger } from "../utils/logger.js";
 const VALIDATION_COMMANDS = [
   ["npm", "ci"],
   ["npm", "run", "lint"],
+  ["npm", "run", "build"],
   ["npm", "run", "test"],
 ] as const;
 
