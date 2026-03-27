@@ -191,9 +191,10 @@ export class Worker {
                 ticketKey: ticket.key,
                 branchName
             });
+            const prTitle = await this.githubService.resolveUniquePullRequestTitle(ticket.key, ticket.summary);
             const pullRequest = await this.githubService.createDraftPullRequest({
                 branchName,
-                title: `${ticket.key}: ${ticket.summary}`,
+                title: prTitle,
                 ticketKey: ticket.key,
                 ticketUrl: ticket.url,
                 summaryOfChanges: initialAgentRun.summary,

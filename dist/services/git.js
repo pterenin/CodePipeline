@@ -12,9 +12,9 @@ export class GitService {
         this.config = config;
     }
     async prepareRepository(ticketKey, summary) {
-        const branchName = `ai/${ticketKey}-${slugify(summary)}`;
         const mirrorPath = path.resolve(this.config.WORK_ROOT, "repo-mirror");
         const worktreeRoot = path.resolve(this.config.WORK_ROOT, "worktrees");
+        const branchName = await this.resolveUniqueBranchName(mirrorPath, ticketKey, summary);
         const repoPath = path.resolve(worktreeRoot, `${ticketKey}-${Date.now()}`);
         this.logger.info("Preparing repository from persistent local mirror", {
             mirrorPath,
@@ -81,6 +81,24 @@ export class GitService {
         await mirrorGit.checkout(this.config.GIT_BASE_BRANCH);
         await mirrorGit.reset(["--hard", `origin/${this.config.GIT_BASE_BRANCH}`]);
     }
+    async resolveUniqueBranchName(mirrorPath, ticketKey, summary) {
+        const baseBranchName = `ai/${ticketKey}-${slugify(summary)}`;
+        const existingBranches = await this.listRemoteBranches(mirrorPath);
+        if (!existingBranches.has(baseBranchName)) {
+            return baseBranchName;
+        }
+        for (let version = 1; version < 1000; version += 1) {
+            const candidate = `${baseBranchName}_v${version}`;
+            if (!existingBranches.has(candidate)) {
+                this.logger.warn("Base branch already exists remotely; using versioned branch name", {
+                    baseBranchName,
+                    candidate
+                });
+                return candidate;
+            }
+        }
+        throw new Error(`Unable to find a unique branch name for ${baseBranchName}`);
+    }
     async cleanupWorktree(mirrorPath, repoPath) {
         this.logger.info("Cleaning up git worktree", { repoPath });
         await execa("git", ["worktree", "remove", "--force", repoPath], {
@@ -109,6 +127,17 @@ export class GitService {
             cwd: mirrorPath,
             reject: false
         });
+    }
+    async listRemoteBranches(mirrorPath) {
+        const branchResult = await execa("git", ["branch", "-r", "--format=%(refname:short)"], {
+            cwd: mirrorPath
+        });
+        return new Set(branchResult.stdout
+            .split("\n")
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .filter((line) => line.startsWith("origin/"))
+            .map((line) => line.replace(/^origin\//, "")));
     }
 }
 function parseWorktreeList(stdout) {

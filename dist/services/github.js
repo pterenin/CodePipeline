@@ -16,6 +16,24 @@ export class GitHubService {
             timeout: 30000
         });
     }
+    async resolveUniquePullRequestTitle(ticketKey, summary) {
+        const baseTitle = `${ticketKey}: ${summary}`;
+        const existingTitles = await this.listExistingPullRequestTitles(ticketKey);
+        if (!existingTitles.has(baseTitle)) {
+            return baseTitle;
+        }
+        for (let version = 1; version < 1000; version += 1) {
+            const candidate = `${baseTitle} _v${version}`;
+            if (!existingTitles.has(candidate)) {
+                this.logger.warn("Base PR title already exists; using versioned PR title", {
+                    baseTitle,
+                    candidate
+                });
+                return candidate;
+            }
+        }
+        throw new Error(`Unable to find a unique PR title for ${baseTitle}`);
+    }
     async createDraftPullRequest(input) {
         this.logger.info("Creating draft GitHub pull request", {
             owner: this.config.GITHUB_OWNER,
@@ -39,6 +57,17 @@ export class GitHubService {
             number: response.data.number,
             url: response.data.html_url
         };
+    }
+    async listExistingPullRequestTitles(ticketKey) {
+        const response = await this.client.get(`/repos/${this.config.GITHUB_OWNER}/${this.config.GITHUB_REPO}/pulls`, {
+            params: {
+                state: "all",
+                per_page: 100
+            }
+        });
+        return new Set(response.data
+            .map((pullRequest) => pullRequest.title.trim())
+            .filter((title) => title.startsWith(`${ticketKey}: `)));
     }
 }
 function buildPullRequestBody(input) {
