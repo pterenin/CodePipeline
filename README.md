@@ -1,6 +1,6 @@
 # Jira AI Worker
 
-`jira-ai-worker` is a conservative Node.js + TypeScript service that pulls one Jira issue at a time from a configured queue, prepares an isolated git worktree from a persistent local mirror, asks an OpenAI-backed agent to make the smallest reasonable code change, validates the result, and opens a draft GitHub pull request when the run succeeds.
+`jira-ai-worker` is a conservative Node.js + TypeScript service that processes one Jira issue at a time from a configured queue, prepares an isolated git worktree from a persistent local mirror, asks an OpenAI-backed agent to make the smallest reasonable code change, validates the result, and opens a draft GitHub pull request when the run succeeds.
 
 The first version is intentionally cautious:
 
@@ -66,8 +66,6 @@ npm run dev
 
 - `PORT`: HTTP port for the Express server.
 - `LOG_LEVEL`: Simple log label for local runs.
-- `POLL_ENABLED`: Set to `true` to make the service check Jira automatically in the background.
-- `POLL_INTERVAL_MS`: Polling interval in milliseconds when automatic polling is enabled.
 
 ### Jira
 
@@ -117,6 +115,18 @@ Returns:
 
 Triggers one serialized processing attempt for the next Jira issue that matches the configured Jira queue filter.
 
+### `GET /api/run-state`
+
+Returns the current in-memory workflow snapshot used by the UI.
+
+### `GET /api/run-events`
+
+Streams live workflow updates over Server-Sent Events.
+
+### `POST /api/run`
+
+Starts a worker run asynchronously for the browser UI. If a run is already active, the endpoint returns HTTP `409`.
+
 Example response:
 
 ```json
@@ -150,6 +160,17 @@ For each run, the service:
 9. Creates a draft GitHub pull request.
 10. Comments back to Jira with the PR link or failure outcome, and labels successful tickets with `ai-done`.
 
+## Frontend
+
+Open `http://localhost:3000` to use the built-in dashboard. The page starts in an idle state, nothing runs automatically, and a new execution begins only when you press `Start`.
+
+The UI shows:
+
+- a node-based workflow view inspired by tools like n8n
+- a spinner on the currently running step
+- per-step details and outputs as they complete
+- a live event feed and final run result payload
+
 ## Notes on the Agent
 
 The agent layer is intentionally modular. Today it:
@@ -178,8 +199,7 @@ Start the server:
 npm run dev
 ```
 
-If `POLL_ENABLED=true`, the service will automatically check Jira on startup and then every `POLL_INTERVAL_MS`.
-If `POLL_ENABLED=false`, nothing runs until you call `POST /run-next`.
+Nothing runs automatically. Start a run from the browser UI or call `POST /run-next`.
 
 Trigger a run:
 

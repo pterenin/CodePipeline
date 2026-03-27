@@ -25,22 +25,29 @@ export class Worker {
     get running() {
         return this.isRunning;
     }
-    async runNext() {
+    async runNext(monitor) {
         if (this.isRunning) {
             throw new Error("Worker is already running.");
         }
         this.isRunning = true;
         this.logger.info("Worker run started");
+        monitor?.startRun();
+        monitor?.log("Worker run started.");
         try {
+            monitor?.startStep("fetch_ticket", "Looking for the next Jira issue.");
             const ticket = await this.jiraService.getNextTicket();
             if (!ticket) {
                 this.logger.info("No Jira ticket found to work on for the current JQL filter");
                 this.logger.info("Worker run finished with no ticket");
-                return {
+                const result = {
                     ok: true,
                     status: "no_ticket",
                     message: "No Jira ticket matched the configured JQL filter."
                 };
+                monitor?.completeStep("fetch_ticket", result.message);
+                monitor?.log(result.message, "fetch_ticket");
+                monitor?.finishRun(result);
+                return result;
             }
             this.logger.info("Jira ticket found for processing", {
                 ticketKey: ticket.key,
@@ -49,24 +56,44 @@ export class Worker {
                 recentHumanComments: ticket.recentHumanComments?.length ?? 0,
                 url: ticket.url
             });
-            return await this.processTicket(ticket);
+            monitor?.completeStep("fetch_ticket", `Loaded ${ticket.key}: ${ticket.summary}`, [ticket.url]);
+            monitor?.log(`Loaded Jira ticket ${ticket.key}.`, "fetch_ticket");
+            const result = await this.processTicket(ticket, monitor);
+            monitor?.finishRun(result);
+            return result;
+        }
+        catch (error) {
+            const message = error instanceof Error ? error.message : "Unknown worker error";
+            monitor?.failCurrentStep(message);
+            monitor?.log(`Worker run failed: ${message}`);
+            monitor?.finishRun({
+                ok: false,
+                status: "failed",
+                message
+            });
+            throw error;
         }
         finally {
             this.logger.info("Worker run finished");
             this.isRunning = false;
         }
     }
-    async processTicket(ticket) {
+    async processTicket(ticket, monitor) {
         this.logger.info(`Processing ticket ${ticket.key}`, {
             summary: ticket.summary
         });
+        monitor?.startStep("evaluate_guardrails", `Checking whether ${ticket.key} is safe to automate.`);
         const guardrailFailure = this.evaluateGuardrails(ticket);
         if (guardrailFailure) {
             this.logger.warn("Ticket skipped by guardrails", {
                 ticketKey: ticket.key,
                 reason: guardrailFailure
             });
+            monitor?.skipStep("evaluate_guardrails", guardrailFailure);
+            monitor?.log(`Ticket ${ticket.key} was skipped by guardrails.`, "evaluate_guardrails");
+            monitor?.startStep("finalize_jira", "Posting skip note back to Jira.");
             await this.safeJiraComment(ticket.key, `Automation skipped: ${guardrailFailure}`);
+            monitor?.completeStep("finalize_jira", "Skip reason was posted to Jira.");
             return {
                 ok: true,
                 status: "skipped",
@@ -74,13 +101,19 @@ export class Worker {
                 message: guardrailFailure
             };
         }
+        monitor?.completeStep("evaluate_guardrails", "Ticket passed automation guardrails.");
         this.logger.info("Posting start comment to Jira", { ticketKey: ticket.key });
+        monitor?.startStep("comment_start", "Posting start comment to Jira.");
         await this.safeJiraComment(ticket.key, "Automation started. Preparing isolated repository workspace.");
+        monitor?.completeStep("comment_start", "Start comment was added to Jira.");
         this.logger.info("Preparing repository workspace", { ticketKey: ticket.key });
+        monitor?.startStep("prepare_repository", "Creating isolated git worktree and branch.");
         const { repoPath, branchName, git, cleanup } = await this.gitService.prepareRepository(ticket.key, ticket.summary);
         this.logger.info("Repository worktree prepared", { repoPath, branchName });
+        monitor?.completeStep("prepare_repository", `Worktree ready on branch ${branchName}.`, [repoPath]);
         try {
             this.logger.info("Running agent implementation pass", { ticketKey: ticket.key });
+            monitor?.startStep("implement_changes", "Running the implementation agent.");
             const initialAgentRun = await this.agentService.implementTicket(ticket, repoPath);
             if (initialAgentRun.decision === "needs_human_review") {
                 const message = initialAgentRun.reason ?? initialAgentRun.summary;
@@ -88,7 +121,10 @@ export class Worker {
                     ticketKey: ticket.key,
                     reason: message
                 });
+                monitor?.failStep("implement_changes", message, initialAgentRun.changedFiles);
+                monitor?.startStep("finalize_jira", "Posting human review note back to Jira.");
                 await this.safeJiraComment(ticket.key, `Automation stopped and needs human review.\n\nReason: ${message}`);
+                monitor?.completeStep("finalize_jira", "Human review note was posted to Jira.");
                 return {
                     ok: true,
                     status: "needs_human_review",
@@ -103,7 +139,10 @@ export class Worker {
                     ticketKey: ticket.key,
                     reason: message
                 });
+                monitor?.failStep("implement_changes", message);
+                monitor?.startStep("finalize_jira", "Posting failure note back to Jira.");
                 await this.safeJiraComment(ticket.key, `Automation could not produce a safe change.\n\nReason: ${message}`);
+                monitor?.completeStep("finalize_jira", "Failure note was posted to Jira.");
                 return {
                     ok: false,
                     status: "failed",
@@ -112,7 +151,9 @@ export class Worker {
                     message
                 };
             }
+            monitor?.completeStep("implement_changes", initialAgentRun.summary, initialAgentRun.changedFiles.length > 0 ? initialAgentRun.changedFiles : undefined);
             this.logger.info("Running validation after implementation", { ticketKey: ticket.key });
+            monitor?.startStep("validation", "Running repository validation commands.");
             let validation = await this.validatorService.run(repoPath);
             for (let attempt = 1; !validation.success && attempt <= this.config.VALIDATION_REPAIR_ATTEMPTS; attempt += 1) {
                 this.logger.warn("Validation failed; starting automated repair attempt", {
@@ -121,6 +162,8 @@ export class Worker {
                     maxAttempts: this.config.VALIDATION_REPAIR_ATTEMPTS,
                     failedCommand: validation.steps[validation.steps.length - 1]?.command
                 });
+                monitor?.log(`Validation failed on ${validation.steps[validation.steps.length - 1]?.command ?? "unknown step"}. Starting repair attempt ${attempt} of ${this.config.VALIDATION_REPAIR_ATTEMPTS}.`, "validation");
+                monitor?.startStep("validation", `Repair attempt ${attempt} of ${this.config.VALIDATION_REPAIR_ATTEMPTS} is running.`);
                 await this.safeJiraComment(ticket.key, `Validation failed. Attempting automated repair ${attempt} of ${this.config.VALIDATION_REPAIR_ATTEMPTS}.`);
                 const repairRun = await this.agentService.repairFromValidation(ticket, repoPath, validation);
                 if (repairRun.decision === "applied") {
@@ -128,6 +171,7 @@ export class Worker {
                         ticketKey: ticket.key,
                         attempt
                     });
+                    monitor?.log(`Repair attempt ${attempt} applied changes. Rerunning validation.`, "validation");
                     validation = await this.validatorService.run(repoPath);
                     continue;
                 }
@@ -138,7 +182,10 @@ export class Worker {
                         attempt,
                         reason: message
                     });
+                    monitor?.failStep("validation", message, summarizeValidation(validation));
+                    monitor?.startStep("finalize_jira", "Posting validation stop note back to Jira.");
                     await this.safeJiraComment(ticket.key, `Automation repair attempt stopped.\n\nReason: ${message}`);
+                    monitor?.completeStep("finalize_jira", "Validation stop note was posted to Jira.");
                     return {
                         ok: false,
                         status: "validation_failed",
@@ -155,7 +202,10 @@ export class Worker {
                     attempts: this.config.VALIDATION_REPAIR_ATTEMPTS,
                     failedCommand: validation.steps[validation.steps.length - 1]?.command
                 });
+                monitor?.failStep("validation", `Validation failed after ${this.config.VALIDATION_REPAIR_ATTEMPTS} repair attempt(s).`, summarizeValidation(validation));
+                monitor?.startStep("finalize_jira", "Posting validation failure back to Jira.");
                 await this.safeJiraComment(ticket.key, `Automation failed validation after ${this.config.VALIDATION_REPAIR_ATTEMPTS} repair attempt(s).\n\nLatest failed step: ${validation.steps[validation.steps.length - 1]?.command ?? "unknown"}`);
+                monitor?.completeStep("finalize_jira", "Validation failure was posted to Jira.");
                 return {
                     ok: false,
                     status: "validation_failed",
@@ -165,6 +215,7 @@ export class Worker {
                     validation
                 };
             }
+            monitor?.completeStep("validation", "Validation passed successfully.", summarizeValidation(validation));
             this.logger.info("Checking whether repository has changes to commit", {
                 ticketKey: ticket.key
             });
@@ -173,7 +224,9 @@ export class Worker {
                 this.logger.warn("Validation passed but no file changes were present", {
                     ticketKey: ticket.key
                 });
+                monitor?.startStep("finalize_jira", "Posting no-change outcome back to Jira.");
                 await this.safeJiraComment(ticket.key, "Automation completed without file changes, so no commit or PR was created.");
+                monitor?.completeStep("finalize_jira", "No-change outcome was posted to Jira.");
                 return {
                     ok: false,
                     status: "failed",
@@ -186,11 +239,14 @@ export class Worker {
                 ticketKey: ticket.key,
                 branchName
             });
+            monitor?.startStep("commit_push", `Committing and pushing branch ${branchName}.`);
             const commitSha = await this.gitService.commitAndPush(git, branchName, `${ticket.key}: ${ticket.summary}`);
+            monitor?.completeStep("commit_push", `Branch ${branchName} was pushed.`, [commitSha]);
             this.logger.info("Creating draft pull request", {
                 ticketKey: ticket.key,
                 branchName
             });
+            monitor?.startStep("create_pull_request", "Creating a draft GitHub pull request.");
             const prTitle = await this.githubService.resolveUniquePullRequestTitle(ticket.key, ticket.summary);
             const pullRequest = await this.githubService.createDraftPullRequest({
                 branchName,
@@ -200,12 +256,15 @@ export class Worker {
                 summaryOfChanges: initialAgentRun.summary,
                 validation
             });
+            monitor?.completeStep("create_pull_request", `Draft pull request #${pullRequest.number} created.`, [pullRequest.url]);
             this.logger.info("Posting success comment to Jira", {
                 ticketKey: ticket.key,
                 pullRequestUrl: pullRequest.url
             });
+            monitor?.startStep("finalize_jira", "Posting PR details back to Jira and labeling the ticket.");
             await this.safeJiraComment(ticket.key, `Automation completed successfully.\n\nDraft PR: ${pullRequest.url}\nBranch: ${branchName}\nCommit: ${commitSha}`);
             await this.safeAddDoneLabel(ticket.key);
+            monitor?.completeStep("finalize_jira", "Jira ticket was updated with the PR and labeled ai-done.");
             this.logger.info("Ticket processed successfully", {
                 ticketKey: ticket.key,
                 branchName,
@@ -252,4 +311,13 @@ export class Worker {
             this.logger.warn(`Failed to add ai-done label for ${ticketKey}`, error);
         }
     }
+}
+function summarizeValidation(validation) {
+    if (!validation) {
+        return [];
+    }
+    return validation.steps.map((step) => {
+        const suffix = step.success ? "passed" : `failed (exit ${step.exitCode ?? "unknown"})`;
+        return `${step.command}: ${suffix}`;
+    });
 }

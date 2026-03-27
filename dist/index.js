@@ -1,15 +1,52 @@
 import express from "express";
 import { config } from "./config.js";
+import { RunMonitor } from "./run-monitor.js";
+import { renderAppHtml } from "./ui.js";
 import { Worker } from "./worker.js";
 import { Logger } from "./utils/logger.js";
 const app = express();
 const logger = new Logger("http");
 const worker = new Worker(config);
-let pollTimer;
+const monitor = new RunMonitor();
 app.use(express.json());
+app.get("/", (_request, response) => {
+    response.type("html").send(renderAppHtml());
+});
 app.get("/health", (_request, response) => {
     logger.info("Received health check");
     response.json({ ok: true });
+});
+app.get("/api/run-state", (_request, response) => {
+    response.json(monitor.getSnapshot());
+});
+app.get("/api/run-events", (_request, response) => {
+    response.setHeader("Content-Type", "text/event-stream");
+    response.setHeader("Cache-Control", "no-cache, no-transform");
+    response.setHeader("Connection", "keep-alive");
+    response.flushHeaders();
+    const unsubscribe = monitor.subscribe((snapshot) => {
+        response.write(`data: ${JSON.stringify(snapshot)}\n\n`);
+    });
+    _request.on("close", () => {
+        unsubscribe();
+        response.end();
+    });
+});
+app.post("/api/run", (_request, response) => {
+    logger.info("Received UI run request");
+    if (worker.running) {
+        logger.warn("Rejected UI run request because worker is already running");
+        response.status(409).json({
+            ok: false,
+            message: "A worker run is already in progress."
+        });
+        return;
+    }
+    void runTriggeredExecution("ui");
+    response.status(202).json({
+        ok: true,
+        message: "Worker run started."
+    });
 });
 app.post("/run-next", async (_request, response) => {
     logger.info("Received run-next request");
@@ -22,7 +59,7 @@ app.post("/run-next", async (_request, response) => {
         return;
     }
     try {
-        const result = await worker.runNext();
+        const result = await worker.runNext(monitor);
         logger.info("Completed run-next request", {
             status: result.status,
             ticketKey: result.ticketKey
@@ -39,44 +76,25 @@ app.post("/run-next", async (_request, response) => {
 });
 app.listen(config.PORT, () => {
     logger.info(`Server listening on port ${config.PORT}`);
-    if (config.POLL_ENABLED) {
-        logger.info("Automatic Jira polling enabled", {
-            intervalMs: config.POLL_INTERVAL_MS
-        });
-        pollTimer = setInterval(() => {
-            void runPollCycle();
-        }, config.POLL_INTERVAL_MS);
-        void runPollCycle();
-        return;
-    }
-    logger.info("Automatic Jira polling is disabled; use POST /run-next to trigger runs");
+    logger.info("Worker is trigger-only; use the UI or POST /run-next to start a run");
 });
-async function runPollCycle() {
-    if (worker.running) {
-        logger.info("Skipping polling cycle because worker is already running");
-        return;
-    }
-    logger.info("Starting scheduled polling cycle");
+async function runTriggeredExecution(source) {
+    logger.info("Starting triggered execution", { source });
     try {
-        const result = await worker.runNext();
-        logger.info("Scheduled polling cycle completed", {
+        const result = await worker.runNext(monitor);
+        logger.info("Triggered execution completed", {
+            source,
             status: result.status,
             ticketKey: result.ticketKey
         });
     }
     catch (error) {
-        logger.error("Scheduled polling cycle failed", error);
+        logger.error("Triggered execution failed", error);
     }
 }
 process.on("SIGINT", () => {
-    if (pollTimer) {
-        clearInterval(pollTimer);
-    }
     process.exit(0);
 });
 process.on("SIGTERM", () => {
-    if (pollTimer) {
-        clearInterval(pollTimer);
-    }
     process.exit(0);
 });

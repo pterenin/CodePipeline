@@ -15,21 +15,21 @@ export class AgentService {
     async implementTicket(ticket, repoPath) {
         this.logger.info("Starting implementation pass", {
             ticketKey: ticket.key,
-            repoPath
+            repoPath,
         });
         const context = await this.loadContext(repoPath, ticket);
         const response = await this.requestChangesWithDiscovery({
             ticket,
             repoPath,
             context,
-            mode: "implementation"
+            mode: "implementation",
         });
         return this.applyChangeResponse(repoPath, response);
     }
     async repairFromValidation(ticket, repoPath, validation) {
         this.logger.info("Starting repair pass", {
             ticketKey: ticket.key,
-            repoPath
+            repoPath,
         });
         const context = await this.loadContext(repoPath, ticket);
         const response = await this.requestChangesWithDiscovery({
@@ -37,7 +37,7 @@ export class AgentService {
             repoPath,
             context,
             mode: "repair",
-            validation
+            validation,
         });
         return this.applyChangeResponse(repoPath, response);
     }
@@ -47,7 +47,6 @@ export class AgentService {
             topLevelEntries: context.topLevelEntries.length,
             catalogFiles: context.fileCatalog.length,
             searchQueries: context.discoveryQueries,
-            loadedFiles: context.selectedFiles.map((file) => file.path)
         });
         return context;
     }
@@ -57,31 +56,32 @@ export class AgentService {
             this.logger.info("Requesting agent decision", {
                 mode: input.mode,
                 round,
-                loadedFiles: currentContext.selectedFiles.map((file) => file.path)
             });
             const response = await this.requestAgentDecision({
                 ...input,
                 context: currentContext,
                 round,
-                maxRounds: this.config.OPENAI_CONTEXT_ROUNDS
+                maxRounds: this.config.OPENAI_CONTEXT_ROUNDS,
             });
             if (response.decision !== "request_more_context") {
                 this.logger.info("Agent returned final decision", {
                     decision: response.decision,
-                    summary: response.summary
+                    summary: response.summary,
                 });
-                const normalizedFiles = response.decision === "apply_changes" ? normalizeFileEdits(response.files) : undefined;
+                const normalizedFiles = response.decision === "apply_changes"
+                    ? normalizeFileEdits(response.files)
+                    : undefined;
                 return {
                     decision: response.decision,
                     summary: response.summary,
                     ...(response.reason ? { reason: response.reason } : {}),
-                    ...(normalizedFiles ? { files: normalizedFiles } : {})
+                    ...(normalizedFiles ? { files: normalizedFiles } : {}),
                 };
             }
             const requestedPaths = (response.files ?? []).filter((item) => typeof item === "string");
             this.logger.info("Agent requested more context", {
                 requestedFiles: requestedPaths,
-                requestedQueries: response.queries ?? []
+                requestedQueries: response.queries ?? [],
             });
             const matchedFiles = currentContext.searchResults
                 .filter((result) => (response.queries ?? []).includes(result.query))
@@ -92,27 +92,27 @@ export class AgentService {
                 return {
                     decision: "needs_human_review",
                     summary: response.summary,
-                    reason: "The agent requested additional context, but no matching files could be loaded safely."
+                    reason: "The agent requested additional context, but no matching files could be loaded safely.",
                 };
             }
             const requestedPathSet = new Set(extraFiles.map((file) => file.path));
             const prioritizedFiles = [
                 ...extraFiles,
-                ...currentContext.selectedFiles.filter((file) => !requestedPathSet.has(file.path))
+                ...currentContext.selectedFiles.filter((file) => !requestedPathSet.has(file.path)),
             ];
             currentContext = {
                 ...currentContext,
-                selectedFiles: prioritizedFiles.slice(0, this.config.OPENAI_MAX_CONTEXT_FILES)
+                selectedFiles: prioritizedFiles.slice(0, this.config.OPENAI_MAX_CONTEXT_FILES),
             };
             this.logger.info("Expanded active context", {
-                loadedFiles: currentContext.selectedFiles.map((file) => file.path)
+                loadedFiles: currentContext.selectedFiles.map((file) => file.path),
             });
         }
         this.logger.warn("Agent hit context round limit");
         return {
             decision: "needs_human_review",
             summary: "Context gathering limit reached.",
-            reason: "The agent requested more context than allowed by the configured round limit."
+            reason: "The agent requested more context than allowed by the configured round limit.",
         };
     }
     async requestAgentDecision(input) {
@@ -120,11 +120,11 @@ export class AgentService {
         this.logger.info("Sending prompt to OpenAI", {
             mode: input.mode,
             round: input.round,
-            model: this.config.OPENAI_MODEL
+            model: this.config.OPENAI_MODEL,
         });
         const response = await this.client.responses.create({
             model: this.config.OPENAI_MODEL,
-            input: prompt
+            input: prompt,
         });
         const text = response.output_text;
         const parsed = parseAgentDecision(text);
@@ -133,7 +133,7 @@ export class AgentService {
             return {
                 decision: "needs_human_review",
                 summary: "Model response was not parseable as a change instruction.",
-                reason: truncate(text || "(empty response)", 1000)
+                reason: truncate(text || "(empty response)", 1000),
             };
         }
         return parsed;
@@ -141,13 +141,13 @@ export class AgentService {
     async applyChangeResponse(repoPath, response) {
         if (response.decision === "needs_human_review") {
             this.logger.warn("Agent requested human review", {
-                summary: response.summary
+                summary: response.summary,
             });
             return {
                 decision: "needs_human_review",
                 summary: response.summary,
                 ...(response.reason ? { reason: response.reason } : {}),
-                changedFiles: []
+                changedFiles: [],
             };
         }
         const fileEdits = response.files ?? [];
@@ -157,11 +157,11 @@ export class AgentService {
                 decision: "no_changes",
                 summary: response.summary,
                 reason: "Model returned no file edits.",
-                changedFiles: []
+                changedFiles: [],
             };
         }
         this.logger.info("Applying agent file edits", {
-            files: fileEdits.map((file) => file.path)
+            files: fileEdits.map((file) => file.path),
         });
         const changedFiles = [];
         for (const fileEdit of fileEdits) {
@@ -171,7 +171,7 @@ export class AgentService {
                     decision: "needs_human_review",
                     summary: response.summary,
                     reason: `Model returned an unsafe file path: ${fileEdit.path}`,
-                    changedFiles: []
+                    changedFiles: [],
                 };
             }
             const fullPath = path.join(repoPath, normalizedPath);
@@ -182,7 +182,7 @@ export class AgentService {
         return {
             decision: "applied",
             summary: response.summary,
-            changedFiles
+            changedFiles,
         };
     }
 }
@@ -197,7 +197,7 @@ function buildPrompt(input) {
         ? [
             "",
             "Validation output from the latest failed run:",
-            ...input.validation.steps.map((step) => `COMMAND: ${step.command}\nSUCCESS: ${step.success}\nSTDOUT:\n${truncate(step.stdout, 4000)}\nSTDERR:\n${truncate(step.stderr, 4000)}`)
+            ...input.validation.steps.map((step) => `COMMAND: ${step.command}\nSUCCESS: ${step.success}\nSTDOUT:\n${truncate(step.stdout, 4000)}\nSTDERR:\n${truncate(step.stderr, 4000)}`),
         ].join("\n\n")
         : "";
     return [
@@ -243,20 +243,28 @@ function buildPrompt(input) {
         "- Return only the files you want to create or replace.",
         "- Each returned file must contain the full final content.",
         "- Keep the edit set small and conservative.",
-        "- Preserve existing style and surrounding code patterns."
+        "- Preserve existing style and surrounding code patterns.",
     ].join("\n");
 }
 function parseAgentDecision(text) {
     const normalized = text.trim();
     const candidates = [
         normalized,
-        normalized.replace(/^```json\s*/i, "").replace(/```$/, "").trim(),
-        normalized.replace(/^```\s*/i, "").replace(/```$/, "").trim()
+        normalized
+            .replace(/^```json\s*/i, "")
+            .replace(/```$/, "")
+            .trim(),
+        normalized
+            .replace(/^```\s*/i, "")
+            .replace(/```$/, "")
+            .trim(),
     ];
     for (const candidate of candidates) {
         try {
             const parsed = JSON.parse(candidate);
-            if (!parsed || typeof parsed.summary !== "string" || typeof parsed.decision !== "string") {
+            if (!parsed ||
+                typeof parsed.summary !== "string" ||
+                typeof parsed.decision !== "string") {
                 continue;
             }
             if (parsed.decision !== "apply_changes" &&
@@ -287,7 +295,7 @@ function normalizeFileEdits(files) {
     })
         .map((file) => ({
         path: file.path,
-        content: file.content
+        content: file.content,
     }));
 }
 function normalizeWorkspacePath(filePath) {

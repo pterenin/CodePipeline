@@ -7,11 +7,6 @@ const configSchema = z
   .object({
     PORT: z.coerce.number().int().positive().default(3000),
     LOG_LEVEL: z.string().default("info"),
-    POLL_ENABLED: z
-      .string()
-      .optional()
-      .transform((value) => value === "true"),
-    POLL_INTERVAL_MS: z.coerce.number().int().positive().default(60000),
     JIRA_BASE_URL: z.url(),
     JIRA_EMAIL: z.email(),
     JIRA_API_TOKEN: z.string().min(1),
