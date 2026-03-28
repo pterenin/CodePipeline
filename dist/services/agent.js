@@ -1,9 +1,13 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { execa } from "execa";
 import OpenAI from "openai";
-import { collectRepositoryContext, loadFilesByPath } from "../utils/files.js";
+import { collectRepositoryContext } from "../utils/files.js";
 import { Logger } from "../utils/logger.js";
 import { truncate } from "../utils/text.js";
+const MAX_TOOL_STEPS_FLOOR = 8;
+const DEFAULT_LIST_LIMIT = 60;
+const DEFAULT_SEARCH_LIMIT = 20;
 export class AgentService {
     config;
     client;
@@ -15,179 +19,439 @@ export class AgentService {
     async implementTicket(ticket, repoPath) {
         this.logger.info("Starting implementation pass", {
             ticketKey: ticket.key,
-            repoPath,
+            repoPath
         });
         const context = await this.loadContext(repoPath, ticket);
-        const response = await this.requestChangesWithDiscovery({
+        return this.runToolCallingSession({
             ticket,
             repoPath,
             context,
-            mode: "implementation",
+            mode: "implementation"
         });
-        return this.applyChangeResponse(repoPath, response);
     }
     async repairFromValidation(ticket, repoPath, validation) {
         this.logger.info("Starting repair pass", {
             ticketKey: ticket.key,
-            repoPath,
+            repoPath
         });
         const context = await this.loadContext(repoPath, ticket);
-        const response = await this.requestChangesWithDiscovery({
+        return this.runToolCallingSession({
             ticket,
             repoPath,
             context,
             mode: "repair",
-            validation,
+            validation
         });
-        return this.applyChangeResponse(repoPath, response);
     }
     async loadContext(repoPath, ticket) {
         const context = await collectRepositoryContext(repoPath, this.config.OPENAI_MAX_CONTEXT_FILES, this.config.OPENAI_MAX_FILE_BYTES, this.config.OPENAI_MAX_SEARCH_RESULTS, `${ticket.summary}\n${ticket.description}\n${ticket.acceptanceCriteria ?? ""}`);
         this.logger.info("Loaded initial repository context", {
             topLevelEntries: context.topLevelEntries.length,
             catalogFiles: context.fileCatalog.length,
-            searchQueries: context.discoveryQueries,
+            searchQueries: context.discoveryQueries
         });
         return context;
     }
-    async requestChangesWithDiscovery(input) {
-        let currentContext = input.context;
-        for (let round = 1; round <= this.config.OPENAI_CONTEXT_ROUNDS; round += 1) {
-            this.logger.info("Requesting agent decision", {
+    async runToolCallingSession(input) {
+        const changedFiles = new Set();
+        const tools = buildAgentTools();
+        const maxToolSteps = Math.max(this.config.OPENAI_CONTEXT_ROUNDS * 4, MAX_TOOL_STEPS_FLOOR);
+        const instructions = buildAgentInstructions(input.mode, maxToolSteps);
+        const initialInput = buildInitialInput(input);
+        this.logger.info("Starting tool-calling agent session", {
+            mode: input.mode,
+            model: this.config.OPENAI_MODEL,
+            maxToolSteps
+        });
+        let response = await this.client.responses.create({
+            model: this.config.OPENAI_MODEL,
+            instructions,
+            input: initialInput,
+            tools,
+            tool_choice: "auto"
+        });
+        for (let step = 1; step <= maxToolSteps; step += 1) {
+            const toolCalls = response.output.filter((item) => item.type === "function_call");
+            if (toolCalls.length === 0) {
+                return finalizeAgentResponse(response.output_text, Array.from(changedFiles));
+            }
+            this.logger.info("Agent requested tool calls", {
                 mode: input.mode,
-                round,
+                step,
+                toolCalls: toolCalls.map((call) => call.name)
             });
-            const response = await this.requestAgentDecision({
-                ...input,
-                context: currentContext,
-                round,
-                maxRounds: this.config.OPENAI_CONTEXT_ROUNDS,
-            });
-            if (response.decision !== "request_more_context") {
-                this.logger.info("Agent returned final decision", {
-                    decision: response.decision,
-                    summary: response.summary,
+            const toolOutputs = [];
+            for (const toolCall of toolCalls) {
+                const toolResult = await this.executeToolCall(toolCall, input.repoPath, changedFiles);
+                toolOutputs.push({
+                    type: "function_call_output",
+                    call_id: toolCall.call_id,
+                    output: JSON.stringify(toolResult)
                 });
-                const normalizedFiles = response.decision === "apply_changes"
-                    ? normalizeFileEdits(response.files)
-                    : undefined;
-                return {
-                    decision: response.decision,
-                    summary: response.summary,
-                    ...(response.reason ? { reason: response.reason } : {}),
-                    ...(normalizedFiles ? { files: normalizedFiles } : {}),
-                };
             }
-            const requestedPaths = (response.files ?? []).filter((item) => typeof item === "string");
-            this.logger.info("Agent requested more context", {
-                requestedFiles: requestedPaths,
-                requestedQueries: response.queries ?? [],
-            });
-            const matchedFiles = currentContext.searchResults
-                .filter((result) => (response.queries ?? []).includes(result.query))
-                .flatMap((result) => result.matches);
-            const extraFiles = await loadFilesByPath(input.repoPath, [...requestedPaths, ...matchedFiles], this.config.OPENAI_MAX_CONTEXT_FILES, this.config.OPENAI_MAX_FILE_BYTES);
-            if (extraFiles.length === 0) {
-                this.logger.warn("Agent requested additional context but no files could be loaded");
-                return {
-                    decision: "needs_human_review",
-                    summary: response.summary,
-                    reason: "The agent requested additional context, but no matching files could be loaded safely.",
-                };
-            }
-            const requestedPathSet = new Set(extraFiles.map((file) => file.path));
-            const prioritizedFiles = [
-                ...extraFiles,
-                ...currentContext.selectedFiles.filter((file) => !requestedPathSet.has(file.path)),
-            ];
-            currentContext = {
-                ...currentContext,
-                selectedFiles: prioritizedFiles.slice(0, this.config.OPENAI_MAX_CONTEXT_FILES),
-            };
-            this.logger.info("Expanded active context", {
-                loadedFiles: currentContext.selectedFiles.map((file) => file.path),
+            response = await this.client.responses.create({
+                model: this.config.OPENAI_MODEL,
+                previous_response_id: response.id,
+                instructions,
+                input: toolOutputs,
+                tools,
+                tool_choice: "auto"
             });
         }
-        this.logger.warn("Agent hit context round limit");
+        this.logger.warn("Agent exceeded tool-calling step limit", {
+            mode: input.mode,
+            maxToolSteps
+        });
         return {
             decision: "needs_human_review",
-            summary: "Context gathering limit reached.",
-            reason: "The agent requested more context than allowed by the configured round limit.",
+            summary: "Tool-calling limit reached.",
+            reason: "The agent exceeded the maximum number of interactive tool steps.",
+            changedFiles: Array.from(changedFiles)
         };
     }
-    async requestAgentDecision(input) {
-        const prompt = buildPrompt(input);
-        this.logger.info("Sending prompt to OpenAI", {
-            mode: input.mode,
-            round: input.round,
-            model: this.config.OPENAI_MODEL,
-        });
-        const response = await this.client.responses.create({
-            model: this.config.OPENAI_MODEL,
-            input: prompt,
-        });
-        const text = response.output_text;
-        const parsed = parseAgentDecision(text);
-        if (!parsed) {
-            this.logger.warn("OpenAI response could not be parsed as JSON");
+    async executeToolCall(toolCall, repoPath, changedFiles) {
+        let parsedArguments;
+        try {
+            parsedArguments = toolCall.arguments ? JSON.parse(toolCall.arguments) : {};
+        }
+        catch {
             return {
-                decision: "needs_human_review",
-                summary: "Model response was not parseable as a change instruction.",
-                reason: truncate(text || "(empty response)", 1000),
+                ok: false,
+                error: `Tool arguments for ${toolCall.name} were not valid JSON.`
             };
         }
-        return parsed;
+        this.logger.info("Executing agent tool", {
+            tool: toolCall.name,
+            arguments: truncate(JSON.stringify(parsedArguments), 1000)
+        });
+        try {
+            switch (toolCall.name) {
+                case "list_files":
+                    return await this.listFilesTool(repoPath, parsedArguments);
+                case "search_repository":
+                    return await this.searchRepositoryTool(repoPath, parsedArguments);
+                case "read_file":
+                    return await this.readFileTool(repoPath, parsedArguments);
+                case "apply_file_edits":
+                    return await this.applyFileEditsTool(repoPath, parsedArguments, changedFiles);
+                case "write_file":
+                    return await this.writeFileTool(repoPath, parsedArguments, changedFiles);
+                default:
+                    return {
+                        ok: false,
+                        error: `Unknown tool requested: ${toolCall.name}`
+                    };
+            }
+        }
+        catch (error) {
+            this.logger.warn(`Agent tool ${toolCall.name} failed`, error);
+            return {
+                ok: false,
+                error: error instanceof Error ? error.message : "Unknown tool execution error"
+            };
+        }
     }
-    async applyChangeResponse(repoPath, response) {
-        if (response.decision === "needs_human_review") {
-            this.logger.warn("Agent requested human review", {
-                summary: response.summary,
-            });
+    async listFilesTool(repoPath, args) {
+        const pathPrefix = typeof args.pathPrefix === "string" ? normalizeWorkspacePath(args.pathPrefix) : "";
+        const limit = clampNumber(args.limit, DEFAULT_LIST_LIMIT, 1, 200);
+        const allFiles = await listRepositoryFiles(repoPath);
+        const files = allFiles
+            .filter((filePath) => !pathPrefix || filePath.startsWith(pathPrefix))
+            .slice(0, limit);
+        return {
+            ok: true,
+            pathPrefix: pathPrefix || ".",
+            totalMatches: files.length,
+            files
+        };
+    }
+    async searchRepositoryTool(repoPath, args) {
+        const query = typeof args.query === "string" ? args.query.trim() : "";
+        if (!query) {
             return {
-                decision: "needs_human_review",
-                summary: response.summary,
-                ...(response.reason ? { reason: response.reason } : {}),
-                changedFiles: [],
+                ok: false,
+                error: "search_repository requires a non-empty query."
             };
         }
-        const fileEdits = response.files ?? [];
-        if (fileEdits.length === 0) {
-            this.logger.warn("Agent returned no file edits");
-            return {
-                decision: "no_changes",
-                summary: response.summary,
-                reason: "Model returned no file edits.",
-                changedFiles: [],
-            };
-        }
-        this.logger.info("Applying agent file edits", {
-            files: fileEdits.map((file) => file.path),
+        const limit = clampNumber(args.limit, DEFAULT_SEARCH_LIMIT, 1, 100);
+        const contentResult = await execa("rg", [
+            "-n",
+            "--hidden",
+            "-g",
+            "!.git",
+            "--glob",
+            "!node_modules",
+            "--glob",
+            "!dist",
+            "--glob",
+            "!build",
+            "--glob",
+            "!.next",
+            "--glob",
+            "!coverage",
+            "--glob",
+            "!.turbo",
+            query
+        ], {
+            cwd: repoPath,
+            reject: false
         });
-        const changedFiles = [];
-        for (const fileEdit of fileEdits) {
-            const normalizedPath = normalizeWorkspacePath(fileEdit.path);
-            if (!normalizedPath) {
+        const pathResult = await execa("rg", ["--files", "--hidden", "-g", "!.git", "-g", `*${query}*`], {
+            cwd: repoPath,
+            reject: false
+        });
+        const contentMatches = parseSearchMatches(contentResult.stdout, limit);
+        const pathMatches = pathResult.stdout
+            .split("\n")
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .map((filePath) => ({ path: filePath }))
+            .slice(0, limit);
+        return {
+            ok: true,
+            query,
+            contentMatches,
+            pathMatches
+        };
+    }
+    async readFileTool(repoPath, args) {
+        const normalizedPath = typeof args.path === "string" ? normalizeWorkspacePath(args.path) : "";
+        if (!normalizedPath) {
+            return {
+                ok: false,
+                error: "read_file requires a safe relative file path."
+            };
+        }
+        const fullPath = path.join(repoPath, normalizedPath);
+        const stats = await fs.stat(fullPath).catch(() => null);
+        if (!stats?.isFile()) {
+            return {
+                ok: false,
+                error: `File not found: ${normalizedPath}`
+            };
+        }
+        const content = await fs.readFile(fullPath, "utf8");
+        const truncatedContent = content.slice(0, this.config.OPENAI_MAX_FILE_BYTES);
+        return {
+            ok: true,
+            path: normalizedPath,
+            truncated: truncatedContent.length < content.length,
+            content: truncatedContent
+        };
+    }
+    async applyFileEditsTool(repoPath, args, changedFiles) {
+        const normalizedPath = typeof args.path === "string" ? normalizeWorkspacePath(args.path) : "";
+        if (!normalizedPath) {
+            return {
+                ok: false,
+                error: "apply_file_edits requires a safe relative file path."
+            };
+        }
+        const edits = Array.isArray(args.edits) ? args.edits : [];
+        if (edits.length === 0) {
+            return {
+                ok: false,
+                error: "apply_file_edits requires at least one edit."
+            };
+        }
+        const fullPath = path.join(repoPath, normalizedPath);
+        const stats = await fs.stat(fullPath).catch(() => null);
+        if (!stats?.isFile()) {
+            return {
+                ok: false,
+                error: `File not found: ${normalizedPath}`
+            };
+        }
+        let content = await fs.readFile(fullPath, "utf8");
+        const applied = [];
+        for (const rawEdit of edits) {
+            if (!rawEdit || typeof rawEdit !== "object") {
                 return {
-                    decision: "needs_human_review",
-                    summary: response.summary,
-                    reason: `Model returned an unsafe file path: ${fileEdit.path}`,
-                    changedFiles: [],
+                    ok: false,
+                    error: "Each edit must be an object."
                 };
             }
-            const fullPath = path.join(repoPath, normalizedPath);
-            await fs.mkdir(path.dirname(fullPath), { recursive: true });
-            await fs.writeFile(fullPath, fileEdit.content, "utf8");
-            changedFiles.push(normalizedPath);
+            const oldText = "oldText" in rawEdit && typeof rawEdit.oldText === "string" ? rawEdit.oldText : "";
+            const newText = "newText" in rawEdit && typeof rawEdit.newText === "string" ? rawEdit.newText : "";
+            const replaceAll = "replaceAll" in rawEdit && typeof rawEdit.replaceAll === "boolean" ? rawEdit.replaceAll : false;
+            if (!oldText) {
+                return {
+                    ok: false,
+                    error: "Each edit must include non-empty oldText."
+                };
+            }
+            const matches = countOccurrences(content, oldText);
+            if (matches === 0) {
+                return {
+                    ok: false,
+                    error: `Could not find target text in ${normalizedPath}: ${truncate(oldText, 160)}`
+                };
+            }
+            if (matches > 1 && !replaceAll) {
+                return {
+                    ok: false,
+                    error: `Target text appears ${matches} times in ${normalizedPath}; set replaceAll to true or use a more specific snippet.`
+                };
+            }
+            content = replaceAll ? content.split(oldText).join(newText) : content.replace(oldText, newText);
+            applied.push({
+                oldTextPreview: truncate(oldText, 120),
+                replacedCount: replaceAll ? matches : 1
+            });
         }
+        await fs.writeFile(fullPath, content, "utf8");
+        changedFiles.add(normalizedPath);
         return {
-            decision: "applied",
-            summary: response.summary,
-            changedFiles,
+            ok: true,
+            path: normalizedPath,
+            applied
+        };
+    }
+    async writeFileTool(repoPath, args, changedFiles) {
+        const normalizedPath = typeof args.path === "string" ? normalizeWorkspacePath(args.path) : "";
+        const content = typeof args.content === "string" ? args.content : "";
+        const overwrite = typeof args.overwrite === "boolean" ? args.overwrite : false;
+        if (!normalizedPath) {
+            return {
+                ok: false,
+                error: "write_file requires a safe relative file path."
+            };
+        }
+        if (!content) {
+            return {
+                ok: false,
+                error: "write_file requires non-empty content."
+            };
+        }
+        const fullPath = path.join(repoPath, normalizedPath);
+        const exists = await fs.stat(fullPath).then(() => true).catch(() => false);
+        if (exists && !overwrite) {
+            return {
+                ok: false,
+                error: `File already exists: ${normalizedPath}. Use overwrite=true only when a full rewrite is intentionally required.`
+            };
+        }
+        await fs.mkdir(path.dirname(fullPath), { recursive: true });
+        await fs.writeFile(fullPath, content, "utf8");
+        changedFiles.add(normalizedPath);
+        return {
+            ok: true,
+            path: normalizedPath,
+            bytesWritten: content.length
         };
     }
 }
-function buildPrompt(input) {
-    const contextFiles = input.context.selectedFiles
+function buildAgentTools() {
+    return [
+        {
+            type: "function",
+            name: "list_files",
+            description: "List repository files, optionally filtered by a path prefix.",
+            strict: true,
+            parameters: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                    pathPrefix: { type: "string" },
+                    limit: { type: "integer", minimum: 1, maximum: 200 }
+                }
+            }
+        },
+        {
+            type: "function",
+            name: "search_repository",
+            description: "Search the repository by content and filename using a ripgrep-style query.",
+            strict: true,
+            parameters: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                    query: { type: "string" },
+                    limit: { type: "integer", minimum: 1, maximum: 100 }
+                },
+                required: ["query"]
+            }
+        },
+        {
+            type: "function",
+            name: "read_file",
+            description: "Read a repository file to inspect its current contents.",
+            strict: true,
+            parameters: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                    path: { type: "string" }
+                },
+                required: ["path"]
+            }
+        },
+        {
+            type: "function",
+            name: "apply_file_edits",
+            description: "Apply targeted string replacements to an existing file. Prefer this over rewriting full files.",
+            strict: true,
+            parameters: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                    path: { type: "string" },
+                    edits: {
+                        type: "array",
+                        minItems: 1,
+                        items: {
+                            type: "object",
+                            additionalProperties: false,
+                            properties: {
+                                oldText: { type: "string" },
+                                newText: { type: "string" },
+                                replaceAll: { type: "boolean" }
+                            },
+                            required: ["oldText", "newText"]
+                        }
+                    }
+                },
+                required: ["path", "edits"]
+            }
+        },
+        {
+            type: "function",
+            name: "write_file",
+            description: "Create a new file or fully rewrite an existing file when a targeted edit is not practical.",
+            strict: true,
+            parameters: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                    path: { type: "string" },
+                    content: { type: "string" },
+                    overwrite: { type: "boolean" }
+                },
+                required: ["path", "content"]
+            }
+        }
+    ];
+}
+function buildAgentInstructions(mode, maxToolSteps) {
+    return [
+        "You are a conservative senior software engineer working inside a git repository.",
+        "Use tools to inspect the codebase before making changes.",
+        "Prefer list_files, search_repository, and read_file to discover relevant code.",
+        "Prefer apply_file_edits for targeted edits. Use write_file only for new files or deliberate full rewrites.",
+        "Keep the edit set minimal and consistent with existing code style.",
+        "Do not touch auth, billing, payments, migrations, secrets, infrastructure, or CI/CD concerns.",
+        "If the requirements are ambiguous, risky, or cannot be satisfied safely, do not edit further and finish with needs_human_review.",
+        "Do not invent files or APIs without first inspecting relevant repository files.",
+        "When you are done, respond with valid JSON only and no markdown fences.",
+        'Final JSON shape: { "decision": "apply_changes" | "needs_human_review", "summary": "short summary", "reason": "optional reason" }',
+        "If you made safe code edits, use decision=apply_changes.",
+        "If you could not complete the work safely, use decision=needs_human_review.",
+        `Mode: ${mode}`,
+        `Maximum tool steps: ${maxToolSteps}`
+    ].join("\n");
+}
+function buildInitialInput(input) {
+    const initialFiles = input.context.selectedFiles
         .map((file) => `FILE: ${file.path}\n---\n${file.content}\n---`)
         .join("\n\n");
     const searchSummary = input.context.searchResults
@@ -197,24 +461,10 @@ function buildPrompt(input) {
         ? [
             "",
             "Validation output from the latest failed run:",
-            ...input.validation.steps.map((step) => `COMMAND: ${step.command}\nSUCCESS: ${step.success}\nSTDOUT:\n${truncate(step.stdout, 4000)}\nSTDERR:\n${truncate(step.stderr, 4000)}`),
+            ...input.validation.steps.map((step) => `COMMAND: ${step.command}\nSUCCESS: ${step.success}\nSTDOUT:\n${truncate(step.stdout, 4000)}\nSTDERR:\n${truncate(step.stderr, 4000)}`)
         ].join("\n\n")
         : "";
     return [
-        "You are a conservative senior software engineer working inside a git repository.",
-        "Your job is to make the smallest valid code change that satisfies the Jira ticket.",
-        "You may request more context before producing code changes if the currently loaded files are not enough.",
-        "If the requirements are ambiguous, risky, or cannot be satisfied confidently from the provided repository context, choose needs_human_review.",
-        "Do not touch auth, billing, payments, migrations, secrets, infrastructure, or CI/CD concerns.",
-        "Do not output explanations outside the required JSON object.",
-        "",
-        "Return valid JSON with this shape:",
-        '{ "decision": "request_more_context" | "apply_changes" | "needs_human_review", "summary": "short summary", "reason": "optional reason", "files": ["optional file paths for more context requests"] | [{"path":"src/example.ts","content":"full replacement file content"}], "queries": ["optional discovery queries to inspect"] }',
-        'When decision is "apply_changes", files must be an array of objects with "path" and the full replacement "content" for each file.',
-        "Do not return git diffs or markdown fences.",
-        "",
-        `Mode: ${input.mode}`,
-        `Context round: ${input.round} of ${input.maxRounds}`,
         `Repository path: ${input.repoPath}`,
         `Ticket key: ${input.ticket.key}`,
         `Ticket summary: ${input.ticket.summary}`,
@@ -225,54 +475,65 @@ function buildPrompt(input) {
         `Top-level repository entries: ${input.context.topLevelEntries.join(", ")}`,
         `Repository file catalog sample: ${input.context.fileCatalog.join(", ")}`,
         `Discovery queries: ${input.context.discoveryQueries.join(", ") || "(none)"}`,
-        "Search results by query:",
+        "Initial search results:",
         searchSummary || "(no matches found)",
         "",
-        "Currently loaded repository context files:",
-        contextFiles || "(no files captured)",
-        validationSummary,
-        "",
-        "Context request rules:",
-        "- Use request_more_context if you need more files before coding.",
-        "- Request concrete repository file paths, not shell commands.",
-        "- Only request files that appear in the repository file catalog or search results.",
-        "- Prefer a focused set of files tied to the ticket.",
-        "- Do not request more context if you already have enough to make a safe decision.",
-        "",
-        "Change rules:",
-        "- Return only the files you want to create or replace.",
-        "- Each returned file must contain the full final content.",
-        "- Keep the edit set small and conservative.",
-        "- Preserve existing style and surrounding code patterns.",
+        "Initial file snippets:",
+        initialFiles || "(no initial files loaded)",
+        validationSummary
     ].join("\n");
 }
-function parseAgentDecision(text) {
+function finalizeAgentResponse(text, changedFiles) {
+    const parsed = parseFinalDecision(text);
+    if (!parsed) {
+        return {
+            decision: "needs_human_review",
+            summary: "Model response was not parseable as a final tool-calling decision.",
+            reason: truncate(text || "(empty response)", 1000),
+            changedFiles
+        };
+    }
+    if (parsed.decision === "needs_human_review") {
+        return {
+            decision: "needs_human_review",
+            summary: parsed.summary,
+            ...(parsed.reason ? { reason: parsed.reason } : {}),
+            changedFiles
+        };
+    }
+    if (changedFiles.length === 0) {
+        return {
+            decision: "no_changes",
+            summary: parsed.summary,
+            reason: parsed.reason ?? "The model finished without applying any file edits.",
+            changedFiles: []
+        };
+    }
+    return {
+        decision: "applied",
+        summary: parsed.summary,
+        changedFiles
+    };
+}
+function parseFinalDecision(text) {
     const normalized = text.trim();
     const candidates = [
         normalized,
-        normalized
-            .replace(/^```json\s*/i, "")
-            .replace(/```$/, "")
-            .trim(),
-        normalized
-            .replace(/^```\s*/i, "")
-            .replace(/```$/, "")
-            .trim(),
+        normalized.replace(/^```json\s*/i, "").replace(/```$/, "").trim(),
+        normalized.replace(/^```\s*/i, "").replace(/```$/, "").trim()
     ];
     for (const candidate of candidates) {
         try {
             const parsed = JSON.parse(candidate);
-            if (!parsed ||
-                typeof parsed.summary !== "string" ||
-                typeof parsed.decision !== "string") {
-                continue;
+            if (parsed &&
+                typeof parsed.summary === "string" &&
+                (parsed.decision === "apply_changes" || parsed.decision === "needs_human_review")) {
+                return {
+                    decision: parsed.decision,
+                    summary: parsed.summary,
+                    ...(typeof parsed.reason === "string" ? { reason: parsed.reason } : {})
+                };
             }
-            if (parsed.decision !== "apply_changes" &&
-                parsed.decision !== "needs_human_review" &&
-                parsed.decision !== "request_more_context") {
-                continue;
-            }
-            return parsed;
         }
         catch {
             continue;
@@ -280,23 +541,37 @@ function parseAgentDecision(text) {
     }
     return null;
 }
-function normalizeFileEdits(files) {
-    if (!Array.isArray(files)) {
+async function listRepositoryFiles(repoPath) {
+    const result = await execa("rg", ["--files", "--hidden", "-g", "!.git"], {
+        cwd: repoPath,
+        reject: false
+    });
+    if (result.exitCode !== 0) {
         return [];
     }
-    return files
-        .filter((file) => {
-        return Boolean(file &&
-            typeof file === "object" &&
-            "path" in file &&
-            "content" in file &&
-            typeof file.path === "string" &&
-            typeof file.content === "string");
+    return result.stdout
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line && isAllowedRepositoryPath(line));
+}
+function parseSearchMatches(output, limit) {
+    return output
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => {
+        const match = line.match(/^([^:]+):(\d+):(.*)$/);
+        if (!match) {
+            return null;
+        }
+        return {
+            path: match[1] ?? "",
+            line: Number(match[2] ?? "0"),
+            preview: truncate((match[3] ?? "").trim(), 240)
+        };
     })
-        .map((file) => ({
-        path: file.path,
-        content: file.content,
-    }));
+        .filter((value) => Boolean(value))
+        .slice(0, limit);
 }
 function normalizeWorkspacePath(filePath) {
     const normalized = filePath.replace(/\\/g, "/").replace(/^\.?\//, "");
@@ -304,4 +579,36 @@ function normalizeWorkspacePath(filePath) {
         return "";
     }
     return normalized;
+}
+function isAllowedRepositoryPath(filePath) {
+    const normalized = normalizeWorkspacePath(filePath);
+    if (!normalized || normalized.startsWith(".git/") || normalized === ".env") {
+        return false;
+    }
+    const rootSegment = normalized.split("/")[0] ?? "";
+    if (["node_modules", "dist", "build", "coverage", ".next", ".turbo"].includes(rootSegment)) {
+        return false;
+    }
+    return true;
+}
+function clampNumber(value, fallback, minimum, maximum) {
+    if (typeof value !== "number" || Number.isNaN(value)) {
+        return fallback;
+    }
+    return Math.min(maximum, Math.max(minimum, Math.trunc(value)));
+}
+function countOccurrences(haystack, needle) {
+    if (!needle) {
+        return 0;
+    }
+    let count = 0;
+    let index = 0;
+    while (true) {
+        const nextIndex = haystack.indexOf(needle, index);
+        if (nextIndex === -1) {
+            return count;
+        }
+        count += 1;
+        index = nextIndex + needle.length;
+    }
 }
