@@ -91,9 +91,8 @@ export class Worker {
             });
             monitor?.skipStep("evaluate_guardrails", guardrailFailure);
             monitor?.log(`Ticket ${ticket.key} was skipped by guardrails.`, "evaluate_guardrails");
-            monitor?.startStep("finalize_jira", "Posting skip note back to Jira.");
-            await this.safeJiraComment(ticket.key, `Automation skipped: ${guardrailFailure}`);
-            monitor?.completeStep("finalize_jira", "Skip reason was posted to Jira.");
+            monitor?.skipStep("comment_start", "Jira comments are only posted after a draft PR is created.");
+            monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
             return {
                 ok: true,
                 status: "skipped",
@@ -102,10 +101,7 @@ export class Worker {
             };
         }
         monitor?.completeStep("evaluate_guardrails", "Ticket passed automation guardrails.");
-        this.logger.info("Posting start comment to Jira", { ticketKey: ticket.key });
-        monitor?.startStep("comment_start", "Posting start comment to Jira.");
-        await this.safeJiraComment(ticket.key, "Automation started. Preparing isolated repository workspace.");
-        monitor?.completeStep("comment_start", "Start comment was added to Jira.");
+        monitor?.skipStep("comment_start", "Jira comments are only posted after a draft PR is created.");
         this.logger.info("Preparing repository workspace", { ticketKey: ticket.key });
         monitor?.startStep("prepare_repository", "Creating isolated git worktree and branch.");
         const { repoPath, branchName, git, cleanup } = await this.gitService.prepareRepository(ticket.key, ticket.summary);
@@ -122,9 +118,7 @@ export class Worker {
                     reason: message
                 });
                 monitor?.failStep("implement_changes", message, initialAgentRun.changedFiles);
-                monitor?.startStep("finalize_jira", "Posting human review note back to Jira.");
-                await this.safeJiraComment(ticket.key, `Automation stopped and needs human review.\n\nReason: ${message}`);
-                monitor?.completeStep("finalize_jira", "Human review note was posted to Jira.");
+                monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
                 return {
                     ok: true,
                     status: "needs_human_review",
@@ -140,9 +134,7 @@ export class Worker {
                     reason: message
                 });
                 monitor?.failStep("implement_changes", message);
-                monitor?.startStep("finalize_jira", "Posting failure note back to Jira.");
-                await this.safeJiraComment(ticket.key, `Automation could not produce a safe change.\n\nReason: ${message}`);
-                monitor?.completeStep("finalize_jira", "Failure note was posted to Jira.");
+                monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
                 return {
                     ok: false,
                     status: "failed",
@@ -164,7 +156,6 @@ export class Worker {
                 });
                 monitor?.log(`Validation failed on ${validation.steps[validation.steps.length - 1]?.command ?? "unknown step"}. Starting repair attempt ${attempt} of ${this.config.VALIDATION_REPAIR_ATTEMPTS}.`, "validation");
                 monitor?.startStep("validation", `Repair attempt ${attempt} of ${this.config.VALIDATION_REPAIR_ATTEMPTS} is running.`);
-                await this.safeJiraComment(ticket.key, `Validation failed. Attempting automated repair ${attempt} of ${this.config.VALIDATION_REPAIR_ATTEMPTS}.`);
                 const repairRun = await this.agentService.repairFromValidation(ticket, repoPath, validation);
                 if (repairRun.decision === "applied") {
                     this.logger.info("Repair attempt applied changes; rerunning validation", {
@@ -183,9 +174,7 @@ export class Worker {
                         reason: message
                     });
                     monitor?.failStep("validation", message, summarizeValidation(validation));
-                    monitor?.startStep("finalize_jira", "Posting validation stop note back to Jira.");
-                    await this.safeJiraComment(ticket.key, `Automation repair attempt stopped.\n\nReason: ${message}`);
-                    monitor?.completeStep("finalize_jira", "Validation stop note was posted to Jira.");
+                    monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
                     return {
                         ok: false,
                         status: "validation_failed",
@@ -203,9 +192,7 @@ export class Worker {
                     failedCommand: validation.steps[validation.steps.length - 1]?.command
                 });
                 monitor?.failStep("validation", `Validation failed after ${this.config.VALIDATION_REPAIR_ATTEMPTS} repair attempt(s).`, summarizeValidation(validation));
-                monitor?.startStep("finalize_jira", "Posting validation failure back to Jira.");
-                await this.safeJiraComment(ticket.key, `Automation failed validation after ${this.config.VALIDATION_REPAIR_ATTEMPTS} repair attempt(s).\n\nLatest failed step: ${validation.steps[validation.steps.length - 1]?.command ?? "unknown"}`);
-                monitor?.completeStep("finalize_jira", "Validation failure was posted to Jira.");
+                monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
                 return {
                     ok: false,
                     status: "validation_failed",
@@ -224,9 +211,7 @@ export class Worker {
                 this.logger.warn("Validation passed but no file changes were present", {
                     ticketKey: ticket.key
                 });
-                monitor?.startStep("finalize_jira", "Posting no-change outcome back to Jira.");
-                await this.safeJiraComment(ticket.key, "Automation completed without file changes, so no commit or PR was created.");
-                monitor?.completeStep("finalize_jira", "No-change outcome was posted to Jira.");
+                monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
                 return {
                     ok: false,
                     status: "failed",

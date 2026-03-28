@@ -166,7 +166,9 @@ Open `http://localhost:3000` to use the built-in dashboard. The page starts in a
 
 The UI shows:
 
-- a node-based workflow view inspired by tools like n8n
+- a React-powered dark-mode dashboard
+- a node-based workflow canvas inspired by GitHub Actions and n8n
+- connector lines between pipeline stages
 - a spinner on the currently running step
 - per-step details and outputs as they complete
 - a live event feed and final run result payload
