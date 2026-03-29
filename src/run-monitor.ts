@@ -1,4 +1,6 @@
 import {
+  type JiraTicket,
+  type TicketQueueItem,
   WORKFLOW_STEP_DEFINITIONS,
   type WorkerRunResult,
   type WorkerRunSnapshot,
@@ -31,9 +33,57 @@ export class RunMonitor {
       runId: this.runId,
       status: "running",
       startedAt: new Date().toISOString(),
+      tickets: [],
       steps: createInitialSteps(),
       logs: []
     };
+    this.emit();
+  }
+
+  setTickets(tickets: JiraTicket[]): void {
+    this.snapshot.tickets = tickets.map((ticket) => ({
+      key: ticket.key,
+      summary: ticket.summary,
+      url: ticket.url,
+      status: "queued"
+    }));
+    this.emit();
+  }
+
+  startTicket(ticketKey: string, detail?: string): void {
+    const fetchStep = this.snapshot.steps.find((step) => step.id === "fetch_ticket");
+    this.snapshot.steps = createInitialSteps().map((step) =>
+      step.id === "fetch_ticket" && fetchStep ? { ...fetchStep } : step
+    );
+    this.snapshot.currentStepId = undefined;
+    this.snapshot.currentTicketKey = ticketKey;
+    this.snapshot.tickets = this.snapshot.tickets.map((ticket) =>
+      ticket.key === ticketKey
+        ? {
+            ...ticket,
+            status: "running",
+            ...(detail ? { detail } : {})
+          }
+        : ticket
+    );
+    this.emit();
+  }
+
+  finishTicket(ticketKey: string, status: TicketQueueItem["status"], detail?: string): void {
+    this.snapshot.tickets = this.snapshot.tickets.map((ticket) =>
+      ticket.key === ticketKey
+        ? {
+            ...ticket,
+            status,
+            ...(detail ? { detail } : {})
+          }
+        : ticket
+    );
+
+    if (this.snapshot.currentTicketKey === ticketKey) {
+      this.snapshot.currentTicketKey = undefined;
+    }
+
     this.emit();
   }
 
@@ -102,6 +152,7 @@ export class RunMonitor {
     this.snapshot.status = result.ok ? "completed" : "failed";
     this.snapshot.finishedAt = new Date().toISOString();
     this.snapshot.currentStepId = undefined;
+    this.snapshot.currentTicketKey = undefined;
     this.snapshot.result = result;
     this.emit();
   }
@@ -143,6 +194,7 @@ export class RunMonitor {
     return {
       runId: 0,
       status: "idle",
+      tickets: [],
       steps: createInitialSteps(),
       logs: []
     };
@@ -175,6 +227,7 @@ function cloneSnapshot(snapshot: WorkerRunSnapshot): WorkerRunSnapshot {
 
   return {
     ...snapshot,
+    tickets: snapshot.tickets.map((ticket) => ({ ...ticket })),
     steps: snapshot.steps.map((step) => ({
       ...step,
       output: [...step.output]

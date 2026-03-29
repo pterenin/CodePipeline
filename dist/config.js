@@ -21,10 +21,7 @@ const configSchema = z
     WORK_ROOT: z.string().min(1).default("./workdir"),
     OPENAI_API_KEY: z.string().min(1),
     OPENAI_MODEL: z.string().min(1).default("gpt-5.4"),
-    OPENAI_MAX_CONTEXT_FILES: z.coerce.number().int().positive().default(8),
-    OPENAI_MAX_FILE_BYTES: z.coerce.number().int().positive().default(12000),
-    OPENAI_CONTEXT_ROUNDS: z.coerce.number().int().positive().default(3),
-    OPENAI_MAX_SEARCH_RESULTS: z.coerce.number().int().positive().default(25),
+    CODEX_CLI_PATH: z.string().min(1).default("codex"),
     VALIDATION_REPAIR_ATTEMPTS: z.coerce.number().int().positive().default(5)
 })
     .superRefine((value, context) => {

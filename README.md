@@ -93,12 +93,9 @@ npm run dev
 
 ### OpenAI
 
-- `OPENAI_API_KEY`: API key for the coding agent.
-- `OPENAI_MODEL`: Model name used for implementation and repair prompts.
-- `OPENAI_MAX_CONTEXT_FILES`: Max number of repository files that can be loaded into active model context at once.
-- `OPENAI_MAX_FILE_BYTES`: Max bytes per file snippet sent to the model.
-- `OPENAI_CONTEXT_ROUNDS`: Number of iterative context-request rounds allowed before the agent must decide.
-- `OPENAI_MAX_SEARCH_RESULTS`: Max number of `rg` discovery matches stored per query.
+- `OPENAI_API_KEY`: API key available to the Codex CLI run.
+- `OPENAI_MODEL`: Model name passed to Codex CLI for implementation and repair passes.
+- `CODEX_CLI_PATH`: Path to the `codex` executable. Defaults to `codex`.
 - `VALIDATION_REPAIR_ATTEMPTS`: Max number of automated repair attempts after validation failures. Defaults to `5`.
 
 ## API
@@ -149,7 +146,7 @@ For each run, the service:
 2. Applies safety checks for missing requirements and risky keywords.
 3. Refreshes a persistent local mirror of the target repository and creates a fresh per-ticket git worktree.
 4. Creates a branch named `ai/JIRA-123-short-slug`.
-5. Uses `rg`-based repository discovery, loads an initial focused context, and lets the OpenAI agent request more files in multiple rounds before producing a patch.
+5. Launches Codex CLI inside the prepared git worktree so the agent can inspect the repository directly, edit files locally, and run focused commands before stopping.
 6. Runs validation commands in order:
    - `npm ci`
    - `npm run lint`
@@ -177,11 +174,9 @@ The UI shows:
 
 The agent layer is intentionally modular. Today it:
 
-- runs repository discovery with `rg --files` and targeted search terms from the Jira ticket
-- gathers a focused initial snapshot instead of a simple fixed traversal
-- lets the model request additional files dynamically in multiple rounds
-- asks the model for either more context, direct file edits, or a human-review decision
-- writes the returned file changes directly into the isolated worktree
+- runs Codex CLI directly inside the isolated ticket worktree
+- lets the agent inspect the full repository with local tools instead of relying on a preloaded file bundle
+- leaves edits in the working tree for the existing validation, git, GitHub, and Jira stages
 - performs repeated repair passes if validation fails, up to the configured limit
 
 You can replace the prompt strategy, the model, or the patch application mechanism later without changing Jira, GitHub, validation, or worker orchestration.

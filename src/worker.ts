@@ -41,10 +41,10 @@ export class Worker {
     monitor?.log("Worker run started.");
 
     try {
-      monitor?.startStep("fetch_ticket", "Looking for the next Jira issue.");
-      const ticket = await this.jiraService.getNextTicket();
-      if (!ticket) {
-        this.logger.info("No Jira ticket found to work on for the current JQL filter");
+      monitor?.startStep("fetch_ticket", "Loading Jira tickets that match the queue filter.");
+      const tickets = await this.jiraService.getQueuedTickets();
+      if (tickets.length === 0) {
+        this.logger.info("No Jira tickets found to work on for the current JQL filter");
         this.logger.info("Worker run finished with no ticket");
         const result: WorkerRunResult = {
           ok: true,
@@ -57,17 +57,22 @@ export class Worker {
         return result;
       }
 
-      this.logger.info("Jira ticket found for processing", {
-        ticketKey: ticket.key,
-        summary: ticket.summary,
-        acceptanceCriteriaPresent: Boolean(ticket.acceptanceCriteria),
-        recentHumanComments: ticket.recentHumanComments?.length ?? 0,
-        url: ticket.url
+      this.logger.info("Jira tickets found for processing", {
+        count: tickets.length,
+        ticketKeys: tickets.map((ticket) => ticket.key)
       });
-      monitor?.completeStep("fetch_ticket", `Loaded ${ticket.key}: ${ticket.summary}`, [ticket.url]);
-      monitor?.log(`Loaded Jira ticket ${ticket.key}.`, "fetch_ticket");
+      monitor?.setTickets(tickets);
+      monitor?.completeStep(
+        "fetch_ticket",
+        `Loaded ${tickets.length} ticket${tickets.length === 1 ? "" : "s"} from Jira.`,
+        tickets.map((ticket) => `${ticket.key}: ${ticket.summary}`)
+      );
+      monitor?.log(
+        `Loaded Jira queue: ${tickets.map((ticket) => ticket.key).join(", ")}.`,
+        "fetch_ticket"
+      );
 
-      const result = await this.processTicket(ticket, monitor);
+      const result = await this.processTickets(tickets, monitor);
       monitor?.finishRun(result);
       return result;
     } catch (error) {
@@ -84,6 +89,57 @@ export class Worker {
       this.logger.info("Worker run finished");
       this.isRunning = false;
     }
+  }
+
+  private async processTickets(tickets: JiraTicket[], monitor?: RunMonitor): Promise<WorkerRunResult> {
+    let successfulTickets = 0;
+    let failedTickets = 0;
+    let lastResult: WorkerRunResult | undefined;
+
+    for (const ticket of tickets) {
+      monitor?.startTicket(ticket.key, `Processing ${ticket.key}: ${ticket.summary}`);
+      monitor?.log(`Starting ticket ${ticket.key}.`);
+
+      const ticketResult = await this.processTicket(ticket, monitor);
+      lastResult = ticketResult;
+
+      if (ticketResult.status === "success") {
+        successfulTickets += 1;
+        monitor?.finishTicket(ticket.key, "done", ticketResult.message);
+      } else {
+        failedTickets += 1;
+        monitor?.finishTicket(ticket.key, "failed", ticketResult.message);
+      }
+
+      monitor?.log(
+        `Finished ticket ${ticket.key} with status ${ticketResult.status}.`,
+      );
+    }
+
+    const processedTickets = tickets.length;
+    const resultStatus: WorkerRunResult["status"] =
+      processedTickets === 0
+        ? "no_ticket"
+        : failedTickets > 0
+          ? "failed"
+          : "success";
+
+    return {
+      ok: failedTickets === 0,
+      status: resultStatus,
+      ...(lastResult?.ticketKey ? { ticketKey: lastResult.ticketKey } : {}),
+      ...(lastResult?.branchName ? { branchName: lastResult.branchName } : {}),
+      ...(lastResult?.pullRequestUrl ? { pullRequestUrl: lastResult.pullRequestUrl } : {}),
+      ...(lastResult?.commitSha ? { commitSha: lastResult.commitSha } : {}),
+      ...(lastResult?.validation ? { validation: lastResult.validation } : {}),
+      processedTickets,
+      successfulTickets,
+      failedTickets,
+      message:
+        failedTickets > 0
+          ? `Processed ${processedTickets} tickets. ${successfulTickets} succeeded and ${failedTickets} failed.`
+          : `Processed ${processedTickets} tickets successfully.`
+    };
   }
 
   private async processTicket(ticket: JiraTicket, monitor?: RunMonitor): Promise<WorkerRunResult> {
@@ -293,7 +349,8 @@ export class Worker {
         `Automation completed successfully.\n\nDraft PR: ${pullRequest.url}\nBranch: ${branchName}\nCommit: ${commitSha}`
       );
       await this.safeAddDoneLabel(ticket.key);
-      monitor?.completeStep("finalize_jira", "Jira ticket was updated with the PR and labeled ai-done.");
+      await this.safeTransitionToDone(ticket.key);
+      monitor?.completeStep("finalize_jira", "Jira ticket was updated with the PR, labeled ai-done, and marked done when possible.");
 
       this.logger.info("Ticket processed successfully", {
         ticketKey: ticket.key,
@@ -342,6 +399,14 @@ export class Worker {
       await this.jiraService.addLabel(ticketKey, "ai-done");
     } catch (error) {
       this.logger.warn(`Failed to add ai-done label for ${ticketKey}`, error);
+    }
+  }
+
+  private async safeTransitionToDone(ticketKey: string): Promise<void> {
+    try {
+      await this.jiraService.transitionToDone(ticketKey);
+    } catch (error) {
+      this.logger.warn(`Failed to transition ${ticketKey} to done`, error);
     }
   }
 

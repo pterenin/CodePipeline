@@ -20,16 +20,16 @@ export class JiraService {
             timeout: 30000
         });
     }
-    async getNextTicket() {
+    async getQueuedTickets() {
         const jiraQuery = buildJiraQuery(this.config);
-        this.logger.info("Searching Jira for next automation-ready ticket", {
+        this.logger.info("Searching Jira for automation-ready tickets", {
             jql: jiraQuery
         });
         let response;
         try {
             response = await this.client.post("/rest/api/3/search/jql", {
                 jql: jiraQuery,
-                maxResults: 1,
+                maxResults: 100,
                 fields: ["summary", "description"]
             });
         }
@@ -37,31 +37,33 @@ export class JiraService {
             this.logger.error("Jira issue search failed", error);
             throw error;
         }
-        const issue = response.data.issues[0];
-        if (!issue) {
+        if (response.data.issues.length === 0) {
             this.logger.info("No matching Jira tickets found");
-            return null;
+            return [];
         }
-        const description = normalizeWhitespace(extractPlainText(issue.fields.description));
-        const acceptanceCriteria = extractAcceptanceCriteria(description);
-        const recentHumanComments = await this.getRecentHumanComments(issue.key);
-        const ticket = {
-            key: issue.key,
-            summary: normalizeWhitespace(issue.fields.summary ?? "(no summary)"),
-            description,
-            url: `${this.config.JIRA_BASE_URL}/browse/${issue.key}`
-        };
-        if (acceptanceCriteria) {
-            ticket.acceptanceCriteria = acceptanceCriteria;
-        }
-        if (recentHumanComments.length > 0) {
-            ticket.recentHumanComments = recentHumanComments;
-        }
-        this.logger.info(`Selected Jira ticket ${ticket.key}`, {
-            summary: ticket.summary,
-            recentHumanComments: recentHumanComments.length
+        const tickets = await Promise.all(response.data.issues.map(async (issue) => {
+            const description = normalizeWhitespace(extractPlainText(issue.fields.description));
+            const acceptanceCriteria = extractAcceptanceCriteria(description);
+            const recentHumanComments = await this.getRecentHumanComments(issue.key);
+            const ticket = {
+                key: issue.key,
+                summary: normalizeWhitespace(issue.fields.summary ?? "(no summary)"),
+                description,
+                url: `${this.config.JIRA_BASE_URL}/browse/${issue.key}`
+            };
+            if (acceptanceCriteria) {
+                ticket.acceptanceCriteria = acceptanceCriteria;
+            }
+            if (recentHumanComments.length > 0) {
+                ticket.recentHumanComments = recentHumanComments;
+            }
+            return ticket;
+        }));
+        this.logger.info("Selected Jira ticket batch", {
+            count: tickets.length,
+            ticketKeys: tickets.map((ticket) => ticket.key)
         });
-        return ticket;
+        return tickets;
     }
     async addComment(ticketKey, body) {
         this.logger.info(`Adding Jira comment to ${ticketKey}`);
@@ -80,6 +82,34 @@ export class JiraService {
                 ]
             }
         });
+    }
+    async transitionToDone(ticketKey) {
+        this.logger.info(`Attempting Jira done transition for ${ticketKey}`);
+        const response = await this.client.get(`/rest/api/3/issue/${ticketKey}/transitions`);
+        const doneTransition = response.data.transitions.find((transition) => {
+            const transitionName = transition.name.toLowerCase();
+            const targetName = transition.to?.name?.toLowerCase() ?? "";
+            const categoryKey = transition.to?.statusCategory?.key?.toLowerCase() ?? "";
+            const categoryName = transition.to?.statusCategory?.name?.toLowerCase() ?? "";
+            return (categoryKey === "done" ||
+                categoryName === "done" ||
+                transitionName === "done" ||
+                transitionName === "closed" ||
+                transitionName === "resolve issue" ||
+                targetName === "done" ||
+                targetName === "closed" ||
+                targetName === "resolved");
+        });
+        if (!doneTransition) {
+            this.logger.warn(`No done-like Jira transition available for ${ticketKey}`);
+            return false;
+        }
+        await this.client.post(`/rest/api/3/issue/${ticketKey}/transitions`, {
+            transition: {
+                id: doneTransition.id
+            }
+        });
+        return true;
     }
     async getRecentHumanComments(ticketKey) {
         this.logger.info(`Fetching recent Jira comments for ${ticketKey}`);

@@ -517,6 +517,101 @@ export function renderAppHtml(): string {
         background: rgba(255, 255, 255, 0.04);
       }
 
+      .ticket-list {
+        display: grid;
+        gap: 10px;
+        margin-top: 18px;
+      }
+
+      .ticket-item {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 12px;
+        align-items: start;
+        padding: 14px 15px;
+        border-radius: 18px;
+        border: 1px solid rgba(232, 236, 255, 0.16);
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.035)),
+          rgba(31, 25, 48, 0.92);
+      }
+
+      .ticket-item.running {
+        border-color: rgba(122, 184, 255, 0.42);
+        box-shadow: 0 0 0 1px rgba(122, 184, 255, 0.2);
+      }
+
+      .ticket-item.done {
+        border-color: rgba(98, 217, 139, 0.34);
+      }
+
+      .ticket-item.failed {
+        border-color: rgba(255, 127, 139, 0.34);
+      }
+
+      .ticket-icon {
+        width: 24px;
+        height: 24px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 999px;
+        font-size: 0.9rem;
+        font-weight: 700;
+      }
+
+      .ticket-icon.queued {
+        color: var(--subtle);
+        background: rgba(255, 255, 255, 0.08);
+      }
+
+      .ticket-icon.done {
+        color: #0d2818;
+        background: var(--success);
+      }
+
+      .ticket-icon.failed {
+        color: white;
+        background: var(--failed);
+      }
+
+      .ticket-icon.running {
+        background: rgba(122, 184, 255, 0.12);
+      }
+
+      .ticket-body {
+        min-width: 0;
+      }
+
+      .ticket-line {
+        display: flex;
+        gap: 10px;
+        align-items: baseline;
+        flex-wrap: wrap;
+      }
+
+      .ticket-key {
+        color: var(--text);
+        font-weight: 700;
+        text-decoration: none;
+      }
+
+      .ticket-key:hover {
+        text-decoration: underline;
+      }
+
+      .ticket-summary {
+        color: var(--muted);
+        line-height: 1.5;
+      }
+
+      .ticket-detail {
+        margin-top: 6px;
+        color: var(--subtle);
+        font-size: 0.84rem;
+        line-height: 1.5;
+      }
+
       .status-accent {
         color: white;
       }
@@ -637,12 +732,19 @@ export function renderAppHtml(): string {
 
       function buildSummaryFields(snapshot) {
         const result = snapshot.result;
+        const doneTickets = snapshot.tickets.filter(function (ticket) {
+          return ticket.status === "done";
+        }).length;
+        const failedTickets = snapshot.tickets.filter(function (ticket) {
+          return ticket.status === "failed";
+        }).length;
         return [
           ["Run", snapshot.runId > 0 ? "#" + snapshot.runId : "Not started"],
           ["Started", formatTime(snapshot.startedAt)],
           ["Finished", formatTime(snapshot.finishedAt)],
           ["Current Step", snapshot.currentStepId ? prettyStatus(snapshot.currentStepId) : "None"],
-          ["Ticket", result && result.ticketKey ? result.ticketKey : "None"],
+          ["Current Ticket", snapshot.currentTicketKey || (result && result.ticketKey ? result.ticketKey : "None")],
+          ["Queue", snapshot.tickets.length ? doneTickets + " done / " + failedTickets + " failed / " + snapshot.tickets.length + " total" : "No tickets loaded"],
           ["Outcome", result ? prettyStatus(result.status) : prettyStatus(snapshot.status)],
           ["Branch", result && result.branchName ? result.branchName : "Not created"],
           ["Pull Request", result && result.pullRequestUrl ? result.pullRequestUrl : "Not created"]
@@ -691,6 +793,7 @@ export function renderAppHtml(): string {
           return readCachedSnapshot() || {
             runId: 0,
             status: "idle",
+            tickets: [],
             steps: [],
             logs: []
           };
@@ -831,7 +934,7 @@ export function renderAppHtml(): string {
                 </p>
                 <div className="hero-actions">
                   <button className="start-button" onClick={startRun} disabled={running || loading || connectionState !== "connected"}>
-                    {running ? "Pipeline Running" : "Start Pipeline"}
+                    {running ? "Queue Running" : "Start Queue"}
                   </button>
                   <div className="ghost-chip">
                     <span>Run State</span>
@@ -858,14 +961,14 @@ export function renderAppHtml(): string {
                 <article className="panel stat-card">
                   <p className="stat-label">Current Focus</p>
                   <p className="stat-value">
-                    {snapshot.currentStepId ? prettyStatus(snapshot.currentStepId) : prettyStatus(snapshot.status)}
+                    {snapshot.currentTicketKey || (snapshot.currentStepId ? prettyStatus(snapshot.currentStepId) : prettyStatus(snapshot.status))}
                   </p>
                   <p className="stat-copy">
                     {connectionState === "offline"
                       ? "The UI cannot reach the backend process. If the job was killed in the terminal, this is the last known pipeline state."
                       : snapshot.status === "running"
-                        ? "The active node and the live event stream update automatically as the worker advances."
-                        : "Nothing runs automatically. A new execution begins only when you start the pipeline."}
+                        ? "The active ticket and its current pipeline node update automatically while the queue advances."
+                        : "Nothing runs automatically. A new execution begins only when you start the queue."}
                   </p>
                 </article>
 
@@ -889,6 +992,14 @@ export function renderAppHtml(): string {
               </article>
 
               <section className="side-column">
+                <article className="panel">
+                  <h2 className="panel-title">Ticket Queue</h2>
+                  <p className="panel-copy">
+                    Matching Jira tickets run one after another. Success marks a ticket done, failures stay visible, and the queue continues.
+                  </p>
+                  <TicketQueue tickets={snapshot.tickets} />
+                </article>
+
                 <article className="panel">
                   <h2 className="panel-title">Run Summary</h2>
                   <p className="panel-copy">
@@ -1086,6 +1197,43 @@ export function renderAppHtml(): string {
                     <span>{formatTime(entry.timestamp)}</span>
                   </div>
                   <div className="event-message">{entry.message}</div>
+                </div>
+              );
+            })}
+          </div>
+        );
+      }
+
+      function TicketQueue(props) {
+        if (!props.tickets.length) {
+          return <div className="empty-state">No tickets loaded yet.</div>;
+        }
+
+        return (
+          <div className="ticket-list">
+            {props.tickets.map(function (ticket) {
+              return (
+                <div className={"ticket-item " + ticket.status} key={ticket.key}>
+                  <div className={"ticket-icon " + ticket.status}>
+                    {ticket.status === "done"
+                      ? "✓"
+                      : ticket.status === "failed"
+                        ? "×"
+                        : ticket.status === "running"
+                          ? <span className="indicator running"></span>
+                          : "·"}
+                  </div>
+                  <div className="ticket-body">
+                    <div className="ticket-line">
+                      <a className="ticket-key" href={ticket.url} target="_blank" rel="noreferrer">
+                        {ticket.key}
+                      </a>
+                      <span className="ticket-summary">{ticket.summary}</span>
+                    </div>
+                    <div className="ticket-detail">
+                      {ticket.detail || prettyStatus(ticket.status)}
+                    </div>
+                  </div>
                 </div>
               );
             })}

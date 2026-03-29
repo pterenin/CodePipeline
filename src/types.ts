@@ -56,6 +56,9 @@ export interface WorkerRunResult {
   message: string;
   validation?: ValidationResult;
   commitSha?: string;
+  processedTickets?: number;
+  successfulTickets?: number;
+  failedTickets?: number;
 }
 
 export const WORKFLOW_STEP_DEFINITIONS = [
@@ -93,13 +96,25 @@ export interface WorkflowLogEntry {
   stepId?: WorkflowStepId | undefined;
 }
 
+export type TicketRunState = "queued" | "running" | "done" | "failed";
+
+export interface TicketQueueItem {
+  key: string;
+  summary: string;
+  url: string;
+  status: TicketRunState;
+  detail?: string | undefined;
+}
+
 export interface WorkerRunSnapshot {
   runId: number;
   status: WorkflowRunStatus;
   startedAt?: string | undefined;
   finishedAt?: string | undefined;
   currentStepId?: WorkflowStepId | undefined;
+  currentTicketKey?: string | undefined;
   result?: WorkerRunResult | undefined;
+  tickets: TicketQueueItem[];
   steps: WorkflowStepState[];
   logs: WorkflowLogEntry[];
 }
