@@ -97,7 +97,7 @@ npm run dev
 - `OPENAI_MODEL`: Model name used for implementation and repair prompts.
 - `OPENAI_MAX_CONTEXT_FILES`: Max number of repository files that can be loaded into active model context at once.
 - `OPENAI_MAX_FILE_BYTES`: Max bytes per file snippet sent to the model.
-- `OPENAI_CONTEXT_ROUNDS`: Agent interaction budget multiplier used to cap tool-calling steps.
+- `OPENAI_CONTEXT_ROUNDS`: Number of iterative context-request rounds allowed before the agent must decide.
 - `OPENAI_MAX_SEARCH_RESULTS`: Max number of `rg` discovery matches stored per query.
 - `VALIDATION_REPAIR_ATTEMPTS`: Max number of automated repair attempts after validation failures. Defaults to `5`.
 
@@ -149,7 +149,7 @@ For each run, the service:
 2. Applies safety checks for missing requirements and risky keywords.
 3. Refreshes a persistent local mirror of the target repository and creates a fresh per-ticket git worktree.
 4. Creates a branch named `ai/JIRA-123-short-slug`.
-5. Uses `rg`-based repository discovery, loads an initial focused context, and then lets the OpenAI agent browse files, run searches, read code, and apply targeted edits through tool-calling.
+5. Uses `rg`-based repository discovery, loads an initial focused context, and lets the OpenAI agent request more files in multiple rounds before producing a patch.
 6. Runs validation commands in order:
    - `npm ci`
    - `npm run lint`
@@ -158,7 +158,7 @@ For each run, the service:
 7. If validation fails, performs up to the configured number of repair attempts with validation output.
 8. Commits and pushes the branch if files changed.
 9. Creates a draft GitHub pull request.
-10. Comments back to Jira only after a draft PR is created, and labels successful tickets with `ai-done`.
+10. Comments back to Jira with the PR link or failure outcome, and labels successful tickets with `ai-done`.
 
 ## Frontend
 
@@ -179,9 +179,9 @@ The agent layer is intentionally modular. Today it:
 
 - runs repository discovery with `rg --files` and targeted search terms from the Jira ticket
 - gathers a focused initial snapshot instead of a simple fixed traversal
-- lets the model browse files with tool-calling instead of relying on one-shot full-file dumps
-- gives the model interactive tools for listing files, running searches, reading code, and applying targeted edits
-- keeps edits inside the isolated worktree while preserving the same validation and PR flow
+- lets the model request additional files dynamically in multiple rounds
+- asks the model for either more context, direct file edits, or a human-review decision
+- writes the returned file changes directly into the isolated worktree
 - performs repeated repair passes if validation fails, up to the configured limit
 
 You can replace the prompt strategy, the model, or the patch application mechanism later without changing Jira, GitHub, validation, or worker orchestration.
