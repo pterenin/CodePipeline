@@ -88,7 +88,7 @@ npm run dev
 ### Git / Workspace
 
 - `GIT_REMOTE_URL`: Git clone URL for the target repository.
-- `GIT_BASE_BRANCH`: Base branch to branch from and target in pull requests.
+- `GIT_BASE_BRANCH`: Base branch to branch from and target in pull requests. The worker refreshes the configured branch in the persistent mirror, so changing this value does not require manually deleting `workdir/repo-mirror`.
 - `WORK_ROOT`: Root directory where the persistent repo mirror and per-ticket worktrees are created.
 
 ### OpenAI
