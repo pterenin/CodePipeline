@@ -54,9 +54,26 @@ export class RunMonitor {
       ...step,
       status: "running",
       detail: detail ?? step.detail,
+      currentCommand: undefined,
       startedAt: step.startedAt ?? new Date().toISOString()
     }));
     this.snapshot.currentStepId = stepId;
+    this.emit();
+  }
+
+  setStepDetail(stepId: WorkflowStepId, detail: string): void {
+    this.updateStep(stepId, (step) => ({
+      ...step,
+      detail,
+    }));
+    this.emit();
+  }
+
+  setStepCurrentCommand(stepId: WorkflowStepId, command?: string): void {
+    this.updateStep(stepId, (step) => ({
+      ...step,
+      currentCommand: command
+    }));
     this.emit();
   }
 
@@ -99,6 +116,7 @@ export class RunMonitor {
       ...step,
       status,
       detail: detail ?? step.detail,
+      currentCommand: undefined,
       output: output ?? step.output,
       startedAt: step.startedAt ?? new Date().toISOString(),
       finishedAt: new Date().toISOString()

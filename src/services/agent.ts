@@ -28,19 +28,26 @@ export class AgentService {
   async implementTicket(
     ticket: JiraTicket,
     repoPath: string,
+    hooks?: {
+      onProgress?: (message: string) => void;
+    },
   ): Promise<AgentRunResult> {
     this.logger.info("Starting implementation pass", {
       ticketKey: ticket.key,
       repoPath,
     });
+    hooks?.onProgress?.("Collecting repository context.");
     const context = await this.loadContext(repoPath, ticket);
+    hooks?.onProgress?.("Reviewing repository context.");
     const response = await this.requestChangesWithDiscovery({
       ticket,
       repoPath,
       context,
       mode: "implementation",
+      ...(hooks ? { hooks } : {}),
     });
 
+    hooks?.onProgress?.("Applying requested file changes.");
     return this.applyChangeResponse(repoPath, response);
   }
 
@@ -92,6 +99,9 @@ export class AgentService {
     context: RepositoryContext;
     mode: "implementation" | "repair";
     validation?: ValidationResult;
+    hooks?: {
+      onProgress?: (message: string) => void;
+    };
   }): Promise<AgentChangeResponse> {
     let currentContext = input.context;
 
@@ -104,6 +114,9 @@ export class AgentService {
         mode: input.mode,
         round,
       });
+      input.hooks?.onProgress?.(
+        `Planning changes with the agent (${round}/${this.config.OPENAI_CONTEXT_ROUNDS}).`,
+      );
 
       const response = await this.requestAgentDecision({
         ...input,
@@ -134,6 +147,7 @@ export class AgentService {
       const requestedPaths = (response.files ?? []).filter(
         (item): item is string => typeof item === "string",
       );
+      input.hooks?.onProgress?.("Gathering a few more files for the agent.");
       this.logger.info("Agent requested more context", {
         requestedFiles: requestedPaths,
         requestedQueries: response.queries ?? [],
@@ -177,6 +191,9 @@ export class AgentService {
           this.config.OPENAI_MAX_CONTEXT_FILES,
         ),
       };
+      input.hooks?.onProgress?.(
+        `Loaded ${extraFiles.length} more file${extraFiles.length === 1 ? "" : "s"} for review.`,
+      );
 
       this.logger.info("Expanded active context", {
         loadedFiles: currentContext.selectedFiles.map((file) => file.path),

@@ -81,6 +81,7 @@ export interface WorkflowStepState {
   label: string;
   status: WorkflowStepStatus;
   detail?: string | undefined;
+  currentCommand?: string | undefined;
   output: string[];
   startedAt?: string | undefined;
   finishedAt?: string | undefined;

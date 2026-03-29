@@ -8,14 +8,16 @@ const VALIDATION_COMMANDS = [
 ];
 export class ValidatorService {
     logger = new Logger("validator");
-    async run(repoPath) {
+    async run(repoPath, hooks) {
         this.logger.info("Starting validation run", { repoPath });
         const steps = [];
         for (const commandParts of VALIDATION_COMMANDS) {
             const [command, ...args] = commandParts;
+            const commandLabel = commandParts.join(" ");
             this.logger.info("Running validation command", {
-                command: commandParts.join(" "),
+                command: commandLabel,
             });
+            hooks?.onCommandStart?.(commandLabel);
             try {
                 const result = await execa(command, args, {
                     cwd: repoPath,
@@ -23,7 +25,7 @@ export class ValidatorService {
                     all: false,
                 });
                 const step = {
-                    command: commandParts.join(" "),
+                    command: commandLabel,
                     success: result.exitCode === 0,
                     exitCode: result.exitCode ?? null,
                     stdout: result.stdout,
@@ -45,11 +47,11 @@ export class ValidatorService {
             catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
                 this.logger.error("Validation command threw an unexpected error", {
-                    command: commandParts.join(" "),
+                    command: commandLabel,
                     message,
                 });
                 steps.push({
-                    command: commandParts.join(" "),
+                    command: commandLabel,
                     success: false,
                     exitCode: 1,
                     stdout: "",

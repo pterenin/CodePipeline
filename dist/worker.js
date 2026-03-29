@@ -110,7 +110,11 @@ export class Worker {
         try {
             this.logger.info("Running agent implementation pass", { ticketKey: ticket.key });
             monitor?.startStep("implement_changes", "Running the implementation agent.");
-            const initialAgentRun = await this.agentService.implementTicket(ticket, repoPath);
+            const initialAgentRun = await this.agentService.implementTicket(ticket, repoPath, {
+                onProgress: (message) => {
+                    monitor?.setStepDetail("implement_changes", message);
+                }
+            });
             if (initialAgentRun.decision === "needs_human_review") {
                 const message = initialAgentRun.reason ?? initialAgentRun.summary;
                 this.logger.warn("Implementation requires human review", {
@@ -146,7 +150,7 @@ export class Worker {
             monitor?.completeStep("implement_changes", initialAgentRun.summary, initialAgentRun.changedFiles.length > 0 ? initialAgentRun.changedFiles : undefined);
             this.logger.info("Running validation after implementation", { ticketKey: ticket.key });
             monitor?.startStep("validation", "Running repository validation commands.");
-            let validation = await this.validatorService.run(repoPath);
+            let validation = await this.runValidationWithMonitor(repoPath, monitor);
             for (let attempt = 1; !validation.success && attempt <= this.config.VALIDATION_REPAIR_ATTEMPTS; attempt += 1) {
                 this.logger.warn("Validation failed; starting automated repair attempt", {
                     ticketKey: ticket.key,
@@ -163,7 +167,7 @@ export class Worker {
                         attempt
                     });
                     monitor?.log(`Repair attempt ${attempt} applied changes. Rerunning validation.`, "validation");
-                    validation = await this.validatorService.run(repoPath);
+                    validation = await this.runValidationWithMonitor(repoPath, monitor);
                     continue;
                 }
                 if (repairRun.decision === "needs_human_review") {
@@ -295,6 +299,14 @@ export class Worker {
         catch (error) {
             this.logger.warn(`Failed to add ai-done label for ${ticketKey}`, error);
         }
+    }
+    async runValidationWithMonitor(repoPath, monitor) {
+        return this.validatorService.run(repoPath, {
+            onCommandStart: (command) => {
+                monitor?.setStepCurrentCommand("validation", command);
+                monitor?.startStep("validation", `Running validation command: ${command}`);
+            }
+        });
     }
 }
 function summarizeValidation(validation) {

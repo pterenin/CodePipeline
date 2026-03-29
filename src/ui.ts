@@ -358,7 +358,8 @@ export function renderAppHtml(): string {
       }
 
       .time-pill,
-      .output-pill {
+      .output-pill,
+      .command-pill {
         display: inline-flex;
         align-items: center;
         padding: 7px 10px;
@@ -366,6 +367,14 @@ export function renderAppHtml(): string {
         background: rgba(255, 255, 255, 0.1);
         color: var(--subtle);
         font-size: 0.76rem;
+      }
+
+      .command-pill {
+        max-width: 100%;
+        border: 1px solid rgba(122, 184, 255, 0.32);
+        background: rgba(122, 184, 255, 0.14);
+        color: #dceeff;
+        font-family: "SFMono-Regular", "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
       }
 
       .node-output {
@@ -1043,6 +1052,7 @@ export function renderAppHtml(): string {
                     <div className="node-times">
                       {step.startedAt ? <span className="time-pill">Started {formatTime(step.startedAt)}</span> : null}
                       {step.finishedAt ? <span className="time-pill">Finished {formatTime(step.finishedAt)}</span> : null}
+                      {step.currentCommand ? <span className="command-pill">{step.currentCommand}</span> : null}
                       {step.output.length ? <span className="output-pill">{step.output.length} updates</span> : null}
                     </div>
 
