@@ -20,6 +20,7 @@ const configSchema = z
     GITHUB_REPO: z.string().min(1),
     GIT_REMOTE_URL: z.string().min(1),
     GIT_BASE_BRANCH: z.string().min(1).default("main"),
+    GIT_DIRECT_COMMITS: z.stringbool().default(false),
     WORK_ROOT: z.string().min(1).default("./workdir"),
     OPENAI_API_KEY: z.string().min(1),
     OPENAI_MODEL: z.string().min(1).default("gpt-5.4"),

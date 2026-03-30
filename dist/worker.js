@@ -121,6 +121,14 @@ export class Worker {
         this.logger.info(`Processing ticket ${ticket.key}`, {
             summary: ticket.summary
         });
+        const useDirectCommits = this.shouldUseDirectCommits();
+        if (this.config.GIT_DIRECT_COMMITS && !useDirectCommits) {
+            this.logger.warn("Direct commits were requested but base branch is main; using PR flow instead", {
+                ticketKey: ticket.key,
+                baseBranch: this.config.GIT_BASE_BRANCH
+            });
+            monitor?.log(`Direct commits requested, but GIT_BASE_BRANCH=${this.config.GIT_BASE_BRANCH} is protected by policy. Using regular PR flow.`, "evaluate_guardrails");
+        }
         monitor?.startStep("evaluate_guardrails", `Checking whether ${ticket.key} is safe to automate.`);
         const guardrailFailure = this.evaluateGuardrails(ticket);
         if (guardrailFailure) {
@@ -263,56 +271,90 @@ export class Worker {
                     message: "Validation passed but repository has no file changes."
                 };
             }
-            this.logger.info("Committing and pushing changes", {
+            this.logger.info("Publishing validated changes", {
                 ticketKey: ticket.key,
-                branchName
-            });
-            monitor?.startStep("commit_push", `Committing and pushing branch ${branchName}.`);
-            const commitSha = await this.gitService.commitAndPush(git, branchName, `${ticket.key}: ${ticket.summary}`);
-            monitor?.completeStep("commit_push", `Branch ${branchName} was pushed.`, [commitSha]);
-            this.logger.info("Creating draft pull request", {
-                ticketKey: ticket.key,
-                branchName
-            });
-            monitor?.startStep("create_pull_request", "Creating a draft GitHub pull request.");
-            const prTitle = await this.githubService.resolveUniquePullRequestTitle(ticket.key, ticket.summary);
-            const pullRequest = await this.githubService.createDraftPullRequest({
                 branchName,
-                title: prTitle,
-                ticketKey: ticket.key,
-                ticketUrl: ticket.url,
-                summaryOfChanges: initialAgentRun.summary,
-                validation
+                mode: useDirectCommits ? "direct_commit" : "pull_request"
             });
-            monitor?.completeStep("create_pull_request", `Draft pull request #${pullRequest.number} created.`, [pullRequest.url]);
-            this.logger.info("Posting success comment to Jira", {
-                ticketKey: ticket.key,
-                pullRequestUrl: pullRequest.url
-            });
-            monitor?.startStep("finalize_jira", "Posting PR details back to Jira and labeling the ticket.");
-            await this.safeJiraComment(ticket.key, `Automation completed successfully.\n\nDraft PR: ${pullRequest.url}\nBranch: ${branchName}\nCommit: ${commitSha}`);
+            const commitMessage = `${ticket.key}: ${ticket.summary}`;
+            monitor?.startStep("commit_push", useDirectCommits
+                ? `Committing and pushing directly to ${this.config.GIT_BASE_BRANCH}.`
+                : `Committing and pushing branch ${branchName}.`);
+            const commitSha = useDirectCommits
+                ? await this.gitService.commitAndPushToBaseBranch(git, commitMessage)
+                : await this.gitService.commitAndPush(git, branchName, commitMessage);
+            monitor?.completeStep("commit_push", useDirectCommits
+                ? `Commit was pushed directly to ${this.config.GIT_BASE_BRANCH}.`
+                : `Branch ${branchName} was pushed.`, [commitSha]);
+            let pullRequestUrl;
+            let successMessage;
+            if (useDirectCommits) {
+                monitor?.skipStep("create_pull_request", `Direct commit mode is enabled; no pull request was created for ${this.config.GIT_BASE_BRANCH}.`);
+                this.logger.info("Posting success comment to Jira after direct commit", {
+                    ticketKey: ticket.key,
+                    baseBranch: this.config.GIT_BASE_BRANCH,
+                    commitSha
+                });
+                monitor?.startStep("finalize_jira", "Posting direct commit details back to Jira and labeling the ticket.");
+                await this.safeJiraComment(ticket.key, `Automation completed successfully.\n\nDirect commit branch: ${this.config.GIT_BASE_BRANCH}\nCommit: ${commitSha}`);
+                successMessage = `Validated changes were committed directly to ${this.config.GIT_BASE_BRANCH}.`;
+            }
+            else {
+                this.logger.info("Creating draft pull request", {
+                    ticketKey: ticket.key,
+                    branchName
+                });
+                monitor?.startStep("create_pull_request", "Creating a draft GitHub pull request.");
+                const prTitle = await this.githubService.resolveUniquePullRequestTitle(ticket.key, ticket.summary);
+                const pullRequest = await this.githubService.createDraftPullRequest({
+                    branchName,
+                    title: prTitle,
+                    ticketKey: ticket.key,
+                    ticketUrl: ticket.url,
+                    summaryOfChanges: initialAgentRun.summary,
+                    validation
+                });
+                pullRequestUrl = pullRequest.url;
+                monitor?.completeStep("create_pull_request", `Draft pull request #${pullRequest.number} created.`, [pullRequest.url]);
+                this.logger.info("Posting success comment to Jira", {
+                    ticketKey: ticket.key,
+                    pullRequestUrl: pullRequest.url
+                });
+                monitor?.startStep("finalize_jira", "Posting PR details back to Jira and labeling the ticket.");
+                await this.safeJiraComment(ticket.key, `Automation completed successfully.\n\nDraft PR: ${pullRequest.url}\nBranch: ${branchName}\nCommit: ${commitSha}`);
+                successMessage = "Draft pull request created successfully.";
+            }
             await this.safeAddDoneLabel(ticket.key);
             await this.safeTransitionToDone(ticket.key);
-            monitor?.completeStep("finalize_jira", "Jira ticket was updated with the PR, labeled ai-done, and marked done when possible.");
+            monitor?.completeStep("finalize_jira", useDirectCommits
+                ? `Jira ticket was updated with the direct commit, labeled ai-done, and marked done when possible.`
+                : "Jira ticket was updated with the PR, labeled ai-done, and marked done when possible.");
             this.logger.info("Ticket processed successfully", {
                 ticketKey: ticket.key,
                 branchName,
-                pullRequestUrl: pullRequest.url
+                pullRequestUrl,
+                publishTarget: useDirectCommits ? this.config.GIT_BASE_BRANCH : branchName
             });
             return {
                 ok: true,
                 status: "success",
                 ticketKey: ticket.key,
-                branchName,
-                pullRequestUrl: pullRequest.url,
+                branchName: useDirectCommits ? this.config.GIT_BASE_BRANCH : branchName,
+                ...(pullRequestUrl ? { pullRequestUrl } : {}),
                 commitSha,
                 validation,
-                message: "Draft pull request created successfully."
+                message: successMessage
             };
         }
         finally {
             await cleanup();
         }
+    }
+    shouldUseDirectCommits() {
+        if (!this.config.GIT_DIRECT_COMMITS) {
+            return false;
+        }
+        return this.config.GIT_BASE_BRANCH.trim().toLowerCase() !== "main";
     }
     evaluateGuardrails(ticket) {
         const combinedText = `${ticket.summary}\n${ticket.description}\n${ticket.acceptanceCriteria ?? ""}`;

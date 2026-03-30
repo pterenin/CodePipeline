@@ -1,13 +1,14 @@
 # Jira AI Worker
 
-`jira-ai-worker` is a conservative Node.js + TypeScript service that processes one Jira issue at a time from a configured queue, prepares an isolated git worktree from a persistent local mirror, asks an OpenAI-backed agent to make the smallest reasonable code change, validates the result, and opens a draft GitHub pull request when the run succeeds.
+`jira-ai-worker` is a conservative Node.js + TypeScript service that processes one Jira issue at a time from a configured queue, prepares an isolated git worktree from a persistent local mirror, asks an OpenAI-backed agent to make the smallest reasonable code change, validates the result, and then either opens a draft GitHub pull request or commits directly to the configured base branch when the run succeeds.
 
 The first version is intentionally cautious:
 
 - It only processes issues returned by a configurable JQL filter.
 - It skips tickets with weak requirements or risky keywords.
 - It never runs more than one ticket at a time.
-- It always creates draft pull requests.
+- It creates draft pull requests by default.
+- It can optionally commit directly to a non-`main` base branch after validation.
 - It never merges automatically.
 - It keeps state in memory and targets a single repository.
 
@@ -88,7 +89,8 @@ npm run dev
 ### Git / Workspace
 
 - `GIT_REMOTE_URL`: Git clone URL for the target repository.
-- `GIT_BASE_BRANCH`: Base branch to branch from and target in pull requests. The worker refreshes the configured branch in the persistent mirror, so changing this value does not require manually deleting `workdir/repo-mirror`.
+- `GIT_BASE_BRANCH`: Base branch to branch from and target in pull requests. When direct commits are enabled, this is also the branch that receives validated commits. The worker refreshes the configured branch in the persistent mirror, so changing this value does not require manually deleting `workdir/repo-mirror`.
+- `GIT_DIRECT_COMMITS`: When `true`, validated changes are committed directly to `GIT_BASE_BRANCH` instead of opening a PR. For safety, if `GIT_BASE_BRANCH=main`, direct commits are disabled automatically and the regular PR flow is used.
 - `WORK_ROOT`: Root directory where the persistent repo mirror and per-ticket worktrees are created.
 
 ### OpenAI
@@ -154,8 +156,10 @@ For each run, the service:
    - `npm test -- --runInBand`
 7. If validation fails, performs up to the configured number of repair attempts with validation output.
 8. Commits and pushes the branch if files changed.
-9. Creates a draft GitHub pull request.
-10. Comments back to Jira with the PR link or failure outcome, and labels successful tickets with `ai-done`.
+9. Publishes the validated change:
+   - by default, pushes a ticket branch and creates a draft GitHub pull request
+   - if `GIT_DIRECT_COMMITS=true` and `GIT_BASE_BRANCH` is not `main`, commits directly to `GIT_BASE_BRANCH`
+10. Comments back to Jira with the PR link or direct commit outcome, and labels successful tickets with `ai-done`.
 
 ## Frontend
 
@@ -186,7 +190,7 @@ You can replace the prompt strategy, the model, or the patch application mechani
 - This service does not include a database in v1.
 - Run history is not persisted across restarts.
 - The worker assumes the target repository uses the specified npm-based validation commands.
-- Draft PR creation and Jira comments are best-effort but surfaced in the API response and logs.
+- Draft PR creation, direct-commit reporting, and Jira comments are best-effort but surfaced in the API response and logs.
 
 ## Local Usage
 

@@ -79,6 +79,25 @@ export class GitService {
     return commitResult.commit;
   }
 
+  async commitAndPushToBaseBranch(git: SimpleGit, message: string): Promise<string> {
+    this.logger.info("Staging repository changes");
+    await git.add(".");
+    this.logger.info("Creating git commit for direct base branch publish", {
+      message,
+      baseBranch: this.config.GIT_BASE_BRANCH
+    });
+    const commitResult = await git.commit(message);
+    this.logger.info("Pushing validated commit directly to origin base branch", {
+      baseBranch: this.config.GIT_BASE_BRANCH
+    });
+    await git.push("origin", `HEAD:refs/heads/${this.config.GIT_BASE_BRANCH}`);
+    this.logger.info("Direct push to base branch completed", {
+      commitSha: commitResult.commit,
+      baseBranch: this.config.GIT_BASE_BRANCH
+    });
+    return commitResult.commit;
+  }
+
   private async ensureMirror(mirrorPath: string): Promise<void> {
     if (!(await pathExists(path.join(mirrorPath, ".git")))) {
       this.logger.info("Creating persistent local repository mirror", {

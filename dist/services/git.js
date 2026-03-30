@@ -59,26 +59,41 @@ export class GitService {
         this.logger.info("Git push completed", { commitSha: commitResult.commit });
         return commitResult.commit;
     }
+    async commitAndPushToBaseBranch(git, message) {
+        this.logger.info("Staging repository changes");
+        await git.add(".");
+        this.logger.info("Creating git commit for direct base branch publish", {
+            message,
+            baseBranch: this.config.GIT_BASE_BRANCH
+        });
+        const commitResult = await git.commit(message);
+        this.logger.info("Pushing validated commit directly to origin base branch", {
+            baseBranch: this.config.GIT_BASE_BRANCH
+        });
+        await git.push("origin", `HEAD:refs/heads/${this.config.GIT_BASE_BRANCH}`);
+        this.logger.info("Direct push to base branch completed", {
+            commitSha: commitResult.commit,
+            baseBranch: this.config.GIT_BASE_BRANCH
+        });
+        return commitResult.commit;
+    }
     async ensureMirror(mirrorPath) {
         if (!(await pathExists(path.join(mirrorPath, ".git")))) {
             this.logger.info("Creating persistent local repository mirror", {
                 mirrorPath
             });
             await ensureCleanDirectory(mirrorPath);
-            await simpleGit().clone(this.config.GIT_REMOTE_URL, mirrorPath, [
-                "--branch",
-                this.config.GIT_BASE_BRANCH,
-                "--single-branch"
-            ]);
-            return;
+            await simpleGit().clone(this.config.GIT_REMOTE_URL, mirrorPath);
         }
         this.logger.info("Refreshing persistent local repository mirror", {
             mirrorPath,
             baseBranch: this.config.GIT_BASE_BRANCH
         });
+        await this.assertRemoteBranchExists(mirrorPath, this.config.GIT_BASE_BRANCH);
         const mirrorGit = simpleGit(mirrorPath);
-        await mirrorGit.fetch("origin", this.config.GIT_BASE_BRANCH, { "--prune": null });
-        await mirrorGit.checkout(this.config.GIT_BASE_BRANCH);
+        await mirrorGit.fetch("origin", "--prune");
+        await mirrorGit.fetch("origin", `+refs/heads/${this.config.GIT_BASE_BRANCH}:refs/remotes/origin/${this.config.GIT_BASE_BRANCH}`);
+        await mirrorGit.checkout(["-B", this.config.GIT_BASE_BRANCH, `origin/${this.config.GIT_BASE_BRANCH}`]);
         await mirrorGit.reset(["--hard", `origin/${this.config.GIT_BASE_BRANCH}`]);
     }
     async resolveUniqueBranchName(mirrorPath, ticketKey, summary) {
@@ -139,6 +154,13 @@ export class GitService {
             .map((line) => line.split("\t")[1] ?? "")
             .filter((line) => line.startsWith("refs/heads/"))
             .map((line) => line.replace(/^refs\/heads\//, "")));
+    }
+    async assertRemoteBranchExists(mirrorPath, branchName) {
+        const remoteBranches = await this.listRemoteBranches(mirrorPath);
+        if (remoteBranches.has(branchName)) {
+            return;
+        }
+        throw new Error(`Configured GIT_BASE_BRANCH="${branchName}" does not exist on origin (${this.config.GIT_REMOTE_URL}).`);
     }
 }
 function parseWorktreeList(stdout) {
