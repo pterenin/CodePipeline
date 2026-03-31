@@ -1,7 +1,7 @@
 import axios, { type AxiosInstance } from "axios";
 
 import type { AppConfig } from "../config.js";
-import type { JiraTicket } from "../types.js";
+import type { JiraImageAttachment, JiraTicket } from "../types.js";
 import { Logger } from "../utils/logger.js";
 import { extractAcceptanceCriteria, normalizeWhitespace } from "../utils/text.js";
 
@@ -11,6 +11,12 @@ interface JiraSearchResponse {
     fields: {
       summary?: string;
       description?: unknown;
+      attachment?: Array<{
+        filename?: string;
+        mimeType?: string;
+        content?: string;
+        thumbnail?: string;
+      }>;
       status?: {
         name?: string;
       };
@@ -68,7 +74,7 @@ export class JiraService {
       response = await this.client.post<JiraSearchResponse>("/rest/api/3/search/jql", {
         jql: jiraQuery,
         maxResults: 100,
-        fields: ["summary", "description"]
+        fields: ["summary", "description", "attachment"]
       });
     } catch (error) {
       this.logger.error("Jira issue search failed", error);
@@ -84,6 +90,7 @@ export class JiraService {
       response.data.issues.map(async (issue) => {
         const description = normalizeWhitespace(extractPlainText(issue.fields.description));
         const acceptanceCriteria = extractAcceptanceCriteria(description);
+        const imageAttachments = extractImageAttachments(issue.fields.attachment);
         const recentHumanComments = await this.getRecentHumanComments(issue.key);
 
         const ticket: JiraTicket = {
@@ -95,6 +102,10 @@ export class JiraService {
 
         if (acceptanceCriteria) {
           ticket.acceptanceCriteria = acceptanceCriteria;
+        }
+
+        if (imageAttachments.length > 0) {
+          ticket.imageAttachments = imageAttachments;
         }
 
         if (recentHumanComments.length > 0) {
@@ -280,4 +291,20 @@ function extractPlainText(value: unknown): string {
   }
 
   return parts.join("\n");
+}
+
+function extractImageAttachments(value: JiraSearchResponse["issues"][number]["fields"]["attachment"]): JiraImageAttachment[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((attachment) => (attachment.mimeType ?? "").toLowerCase().startsWith("image/"))
+    .map((attachment) => ({
+      filename: normalizeWhitespace(attachment.filename ?? "image"),
+      mimeType: attachment.mimeType ?? "application/octet-stream",
+      contentUrl: attachment.content ?? "",
+      ...(attachment.thumbnail ? { thumbnailUrl: attachment.thumbnail } : {})
+    }))
+    .filter((attachment) => Boolean(attachment.contentUrl));
 }

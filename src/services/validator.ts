@@ -17,6 +17,7 @@ export class ValidatorService {
     repoPath: string,
     hooks?: {
       onCommandStart?: (command: string) => void;
+      signal?: AbortSignal;
     },
   ): Promise<ValidationResult> {
     this.logger.info("Starting validation run", { repoPath });
@@ -34,6 +35,7 @@ export class ValidatorService {
           cwd: repoPath,
           reject: false,
           all: false,
+          ...(hooks?.signal ? { cancelSignal: hooks.signal } : {}),
         });
 
         const step: ValidationStepResult = {

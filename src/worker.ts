@@ -17,6 +17,8 @@ export class Worker {
   private readonly validatorService: ValidatorService;
   private readonly agentService: AgentService;
   private isRunning = false;
+  private stopRequested = false;
+  private abortController: AbortController | undefined;
 
   constructor(private readonly config: AppConfig) {
     this.jiraService = new JiraService(config);
@@ -30,12 +32,30 @@ export class Worker {
     return this.isRunning;
   }
 
+  requestStop(monitor?: RunMonitor): boolean {
+    if (!this.isRunning) {
+      return false;
+    }
+
+    if (this.stopRequested) {
+      return true;
+    }
+
+    this.stopRequested = true;
+    this.abortController?.abort(new WorkerStoppedError());
+    this.logger.warn("Stop requested for active worker run");
+    monitor?.markStopRequested("Stop requested. Halting the pipeline as soon as the current work is interrupted safely.");
+    return true;
+  }
+
   async runNext(monitor?: RunMonitor): Promise<WorkerRunResult> {
     if (this.isRunning) {
       throw new Error("Worker is already running.");
     }
 
     this.isRunning = true;
+    this.stopRequested = false;
+    this.abortController = new AbortController();
     this.logger.info("Worker run started");
     monitor?.startRun();
     monitor?.log("Worker run started.");
@@ -76,6 +96,18 @@ export class Worker {
       monitor?.finishRun(result);
       return result;
     } catch (error) {
+      if (isWorkerStoppedError(error)) {
+        const result: WorkerRunResult = {
+          ok: true,
+          status: "stopped",
+          message: "Pipeline stopped by user request."
+        };
+        monitor?.failCurrentStep(result.message);
+        monitor?.log(result.message);
+        monitor?.finishRun(result);
+        return result;
+      }
+
       const message = error instanceof Error ? error.message : "Unknown worker error";
       monitor?.failCurrentStep(message);
       monitor?.log(`Worker run failed: ${message}`);
@@ -88,6 +120,8 @@ export class Worker {
     } finally {
       this.logger.info("Worker run finished");
       this.isRunning = false;
+      this.stopRequested = false;
+      this.abortController = undefined;
     }
   }
 
@@ -97,6 +131,7 @@ export class Worker {
     let lastResult: WorkerRunResult | undefined;
 
     for (const ticket of tickets) {
+      this.throwIfStopped();
       monitor?.startTicket(ticket.key, `Processing ${ticket.key}: ${ticket.summary}`);
       monitor?.log(`Starting ticket ${ticket.key}.`);
 
@@ -143,6 +178,7 @@ export class Worker {
   }
 
   private async processTicket(ticket: JiraTicket, monitor?: RunMonitor): Promise<WorkerRunResult> {
+    this.throwIfStopped();
     this.logger.info(`Processing ticket ${ticket.key}`, {
       summary: ticket.summary
     });
@@ -160,6 +196,7 @@ export class Worker {
     }
 
     monitor?.startStep("evaluate_guardrails", `Checking whether ${ticket.key} is safe to automate.`);
+    this.throwIfStopped();
     const guardrailFailure = this.evaluateGuardrails(ticket);
     if (guardrailFailure) {
       this.logger.warn("Ticket skipped by guardrails", {
@@ -181,6 +218,7 @@ export class Worker {
 
     monitor?.skipStep("comment_start", "Jira comments are only posted after a draft PR is created.");
 
+    this.throwIfStopped();
     this.logger.info("Preparing repository workspace", { ticketKey: ticket.key });
     monitor?.startStep("prepare_repository", "Creating isolated git worktree and branch.");
     const { repoPath, branchName, git, cleanup } = await this.gitService.prepareRepository(ticket.key, ticket.summary);
@@ -188,13 +226,16 @@ export class Worker {
     monitor?.completeStep("prepare_repository", `Worktree ready on branch ${branchName}.`, [repoPath]);
 
     try {
+      this.throwIfStopped();
       this.logger.info("Running agent implementation pass", { ticketKey: ticket.key });
       monitor?.startStep("implement_changes", "Running the implementation agent.");
       const initialAgentRun = await this.agentService.implementTicket(ticket, repoPath, {
         onProgress: (message) => {
           monitor?.setStepDetail("implement_changes", message);
-        }
+        },
+        ...(this.abortController?.signal ? { signal: this.abortController.signal } : {})
       });
+      this.throwIfStopped();
       if (initialAgentRun.decision === "needs_human_review") {
         const message = initialAgentRun.reason ?? initialAgentRun.summary;
         this.logger.warn("Implementation requires human review", {
@@ -238,6 +279,7 @@ export class Worker {
       monitor?.startStep("validation", "Running repository validation commands.");
       let validation = await this.runValidationWithMonitor(repoPath, monitor);
       for (let attempt = 1; !validation.success && attempt <= this.config.VALIDATION_REPAIR_ATTEMPTS; attempt += 1) {
+        this.throwIfStopped();
         this.logger.warn("Validation failed; starting automated repair attempt", {
           ticketKey: ticket.key,
           attempt,
@@ -250,7 +292,13 @@ export class Worker {
         );
         monitor?.startStep("validation", `Repair attempt ${attempt} of ${this.config.VALIDATION_REPAIR_ATTEMPTS} is running.`);
 
-        const repairRun = await this.agentService.repairFromValidation(ticket, repoPath, validation);
+        const repairRun = await this.agentService.repairFromValidation(
+          ticket,
+          repoPath,
+          validation,
+          this.abortController?.signal
+        );
+        this.throwIfStopped();
 
         if (repairRun.decision === "applied") {
           this.logger.info("Repair attempt applied changes; rerunning validation", {
@@ -282,6 +330,7 @@ export class Worker {
         }
       }
 
+      this.throwIfStopped();
       if (!validation.success) {
         this.logger.warn("Validation failed after maximum repair attempts", {
           ticketKey: ticket.key,
@@ -305,6 +354,7 @@ export class Worker {
       }
       monitor?.completeStep("validation", "Validation passed successfully.", summarizeValidation(validation));
 
+      this.throwIfStopped();
       this.logger.info("Checking whether repository has changes to commit", {
         ticketKey: ticket.key
       });
@@ -335,6 +385,7 @@ export class Worker {
           ? `Committing and pushing directly to ${this.config.GIT_BASE_BRANCH}.`
           : `Committing and pushing branch ${branchName}.`
       );
+      this.throwIfStopped();
       const commitSha = useDirectCommits
         ? await this.gitService.commitAndPushToBaseBranch(git, commitMessage)
         : await this.gitService.commitAndPush(git, branchName, commitMessage);
@@ -350,6 +401,7 @@ export class Worker {
       let successMessage: string;
 
       if (useDirectCommits) {
+        this.throwIfStopped();
         monitor?.skipStep(
           "create_pull_request",
           `Direct commit mode is enabled; no pull request was created for ${this.config.GIT_BASE_BRANCH}.`
@@ -371,6 +423,7 @@ export class Worker {
           branchName
         });
         monitor?.startStep("create_pull_request", "Creating a draft GitHub pull request.");
+        this.throwIfStopped();
         const prTitle = await this.githubService.resolveUniquePullRequestTitle(ticket.key, ticket.summary);
         const pullRequest = await this.githubService.createDraftPullRequest({
           branchName,
@@ -395,6 +448,7 @@ export class Worker {
         successMessage = "Draft pull request created successfully.";
       }
 
+      this.throwIfStopped();
       await this.safeAddDoneLabel(ticket.key);
       await this.safeTransitionToDone(ticket.key);
       monitor?.completeStep(
@@ -476,8 +530,17 @@ export class Worker {
       onCommandStart: (command) => {
         monitor?.setStepCurrentCommand("validation", command);
         monitor?.startStep("validation", `Running validation command: ${command}`);
-      }
+      },
+      ...(this.abortController?.signal ? { signal: this.abortController.signal } : {})
     });
+  }
+
+  private throwIfStopped(): void {
+    if (this.stopRequested || this.abortController?.signal.aborted) {
+      throw this.abortController?.signal.reason instanceof Error
+        ? this.abortController.signal.reason
+        : new WorkerStoppedError();
+    }
   }
 }
 
@@ -490,4 +553,15 @@ function summarizeValidation(validation: WorkerRunResult["validation"]): string[
     const suffix = step.success ? "passed" : `failed (exit ${step.exitCode ?? "unknown"})`;
     return `${step.command}: ${suffix}`;
   });
+}
+
+class WorkerStoppedError extends Error {
+  constructor() {
+    super("Pipeline stopped by user request.");
+    this.name = "WorkerStoppedError";
+  }
+}
+
+function isWorkerStoppedError(error: unknown): boolean {
+  return error instanceof WorkerStoppedError || (error instanceof Error && error.name === "AbortError");
 }

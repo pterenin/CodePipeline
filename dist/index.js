@@ -47,6 +47,21 @@ app.post("/api/run", (_request, response) => {
         message: "Worker run started.",
     });
 });
+app.post("/api/run/stop", (_request, response) => {
+    logger.info("Received UI stop request");
+    if (!worker.running) {
+        response.status(409).json({
+            ok: false,
+            message: "No worker run is currently in progress.",
+        });
+        return;
+    }
+    worker.requestStop(monitor);
+    response.status(202).json({
+        ok: true,
+        message: "Stop request accepted.",
+    });
+});
 app.post("/run-next", async (_request, response) => {
     logger.info("Received run-next request");
     if (worker.running) {

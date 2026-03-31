@@ -165,6 +165,16 @@ export function renderAppHtml(): string {
         box-shadow: none;
       }
 
+      .stop-button {
+        background: linear-gradient(135deg, #ff7f8b 0%, #c83f59 100%);
+        box-shadow: 0 18px 38px rgba(200, 63, 89, 0.32);
+      }
+
+      .stop-button:hover:enabled {
+        transform: translateY(-1px);
+        box-shadow: 0 24px 46px rgba(200, 63, 89, 0.38);
+      }
+
       .ghost-chip {
         display: inline-flex;
         align-items: center;
@@ -429,6 +439,13 @@ export function renderAppHtml(): string {
         animation: spin 0.9s linear infinite;
       }
 
+      .indicator.stopping {
+        background: transparent;
+        border: 2px solid rgba(255, 209, 102, 0.24);
+        border-top-color: var(--skipped);
+        animation: spin 0.9s linear infinite;
+      }
+
       .side-column {
         display: grid;
         gap: 20px;
@@ -618,6 +635,10 @@ export function renderAppHtml(): string {
 
       .status-accent.running {
         color: #b8ddff;
+      }
+
+      .status-accent.stopping {
+        color: #ffe19b;
       }
 
       .status-accent.completed {
@@ -912,7 +933,28 @@ export function renderAppHtml(): string {
           }
         }
 
-        const running = snapshot.status === "running";
+        async function stopRun() {
+          try {
+            const response = await fetch("/api/run/stop", { method: "POST" });
+            if (response.status === 409) {
+              const data = await response.json();
+              window.alert(data.message || "No run is currently active.");
+              return;
+            }
+
+            if (!response.ok) {
+              const data = await response.json().catch(function () {
+                return {};
+              });
+              throw new Error(data.message || "Unable to stop the worker.");
+            }
+          } catch (error) {
+            window.alert(error instanceof Error ? error.message : String(error));
+          }
+        }
+
+        const running = snapshot.status === "running" || snapshot.status === "stopping";
+        const stopPending = snapshot.status === "stopping" || Boolean(snapshot.stopRequested);
         const summaryFields = useMemo(function () {
           return buildSummaryFields(snapshot);
         }, [snapshot]);
@@ -935,6 +977,13 @@ export function renderAppHtml(): string {
                 <div className="hero-actions">
                   <button className="start-button" onClick={startRun} disabled={running || loading || connectionState !== "connected"}>
                     {running ? "Queue Running" : "Start Queue"}
+                  </button>
+                  <button
+                    className="start-button stop-button"
+                    onClick={stopRun}
+                    disabled={!running || loading || connectionState !== "connected" || stopPending}
+                  >
+                    {stopPending ? "Stopping..." : "Stop Queue"}
                   </button>
                   <div className="ghost-chip">
                     <span>Run State</span>
@@ -966,8 +1015,10 @@ export function renderAppHtml(): string {
                   <p className="stat-copy">
                     {connectionState === "offline"
                       ? "The UI cannot reach the backend process. If the job was killed in the terminal, this is the last known pipeline state."
-                      : snapshot.status === "running"
-                        ? "The active ticket and its current pipeline node update automatically while the queue advances."
+                      : snapshot.status === "stopping"
+                        ? "A stop request is in flight. The backend is interrupting active work and will stop before any further pipeline steps continue."
+                        : snapshot.status === "running"
+                          ? "The active ticket and its current pipeline node update automatically while the queue advances."
                         : "Nothing runs automatically. A new execution begins only when you start the queue."}
                   </p>
                 </article>

@@ -30,7 +30,7 @@ export class JiraService {
             response = await this.client.post("/rest/api/3/search/jql", {
                 jql: jiraQuery,
                 maxResults: 100,
-                fields: ["summary", "description"]
+                fields: ["summary", "description", "attachment"]
             });
         }
         catch (error) {
@@ -44,6 +44,7 @@ export class JiraService {
         const tickets = await Promise.all(response.data.issues.map(async (issue) => {
             const description = normalizeWhitespace(extractPlainText(issue.fields.description));
             const acceptanceCriteria = extractAcceptanceCriteria(description);
+            const imageAttachments = extractImageAttachments(issue.fields.attachment);
             const recentHumanComments = await this.getRecentHumanComments(issue.key);
             const ticket = {
                 key: issue.key,
@@ -53,6 +54,9 @@ export class JiraService {
             };
             if (acceptanceCriteria) {
                 ticket.acceptanceCriteria = acceptanceCriteria;
+            }
+            if (imageAttachments.length > 0) {
+                ticket.imageAttachments = imageAttachments;
             }
             if (recentHumanComments.length > 0) {
                 ticket.recentHumanComments = recentHumanComments;
@@ -191,4 +195,18 @@ function extractPlainText(value) {
         }
     }
     return parts.join("\n");
+}
+function extractImageAttachments(value) {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+    return value
+        .filter((attachment) => (attachment.mimeType ?? "").toLowerCase().startsWith("image/"))
+        .map((attachment) => ({
+        filename: normalizeWhitespace(attachment.filename ?? "image"),
+        mimeType: attachment.mimeType ?? "application/octet-stream",
+        contentUrl: attachment.content ?? "",
+        ...(attachment.thumbnail ? { thumbnailUrl: attachment.thumbnail } : {})
+    }))
+        .filter((attachment) => Boolean(attachment.contentUrl));
 }

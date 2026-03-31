@@ -32,6 +32,7 @@ export class RunMonitor {
     this.snapshot = {
       runId: this.runId,
       status: "running",
+      stopRequested: false,
       startedAt: new Date().toISOString(),
       tickets: [],
       steps: createInitialSteps(),
@@ -149,11 +150,24 @@ export class RunMonitor {
   }
 
   finishRun(result: WorkerRunResult): void {
-    this.snapshot.status = result.ok ? "completed" : "failed";
+    this.snapshot.status = result.status === "stopped" || result.ok ? "completed" : "failed";
     this.snapshot.finishedAt = new Date().toISOString();
+    this.snapshot.stopRequested = false;
     this.snapshot.currentStepId = undefined;
     this.snapshot.currentTicketKey = undefined;
     this.snapshot.result = result;
+    this.emit();
+  }
+
+  markStopRequested(detail?: string): void {
+    this.snapshot.stopRequested = true;
+    this.snapshot.status = "stopping";
+
+    if (detail) {
+      this.log(detail);
+      return;
+    }
+
     this.emit();
   }
 
@@ -194,6 +208,7 @@ export class RunMonitor {
     return {
       runId: 0,
       status: "idle",
+      stopRequested: false,
       tickets: [],
       steps: createInitialSteps(),
       logs: []

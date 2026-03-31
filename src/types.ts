@@ -3,8 +3,16 @@ export interface JiraTicket {
   summary: string;
   description: string;
   acceptanceCriteria?: string;
+  imageAttachments?: JiraImageAttachment[];
   recentHumanComments?: string[];
   url: string;
+}
+
+export interface JiraImageAttachment {
+  filename: string;
+  mimeType: string;
+  contentUrl: string;
+  thumbnailUrl?: string;
 }
 
 export interface ValidationStepResult {
@@ -43,6 +51,7 @@ export type WorkerRunStatus =
   | "success"
   | "no_ticket"
   | "skipped"
+  | "stopped"
   | "needs_human_review"
   | "validation_failed"
   | "failed";
@@ -77,7 +86,7 @@ export type WorkflowStepId = (typeof WORKFLOW_STEP_DEFINITIONS)[number]["id"];
 
 export type WorkflowStepStatus = "idle" | "running" | "completed" | "failed" | "skipped";
 
-export type WorkflowRunStatus = "idle" | "running" | "completed" | "failed";
+export type WorkflowRunStatus = "idle" | "running" | "stopping" | "completed" | "failed";
 
 export interface WorkflowStepState {
   id: WorkflowStepId;
@@ -109,6 +118,7 @@ export interface TicketQueueItem {
 export interface WorkerRunSnapshot {
   runId: number;
   status: WorkflowRunStatus;
+  stopRequested?: boolean | undefined;
   startedAt?: string | undefined;
   finishedAt?: string | undefined;
   currentStepId?: WorkflowStepId | undefined;

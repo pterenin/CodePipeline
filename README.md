@@ -145,6 +145,7 @@ If a run is already active, the endpoint returns HTTP `409`.
 For each run, the service:
 
 1. Reads the next issue from Jira using either the configured full JQL or a generated project-based queue query.
+   Image attachments on the issue are downloaded into a git-ignored local folder and made available to Codex during the run.
 2. Applies safety checks for missing requirements and risky keywords.
 3. Refreshes a persistent local mirror of the target repository and creates a fresh per-ticket git worktree.
 4. Creates a branch named `ai/JIRA-123-short-slug`.

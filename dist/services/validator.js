@@ -23,6 +23,7 @@ export class ValidatorService {
                     cwd: repoPath,
                     reject: false,
                     all: false,
+                    ...(hooks?.signal ? { cancelSignal: hooks.signal } : {}),
                 });
                 const step = {
                     command: commandLabel,
