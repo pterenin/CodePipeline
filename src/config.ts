@@ -11,6 +11,7 @@ const configSchema = z
     JIRA_EMAIL: z.email(),
     JIRA_API_TOKEN: z.string().min(1),
     JIRA_JQL: z.string().trim().optional(),
+    JIRA_FORCE_INCLUDE_KEYS: z.string().trim().optional(),
     JIRA_PROJECT_KEY: z.string().trim().optional(),
     JIRA_QUEUE_LABEL: z.string().trim().default("ai-ready"),
     JIRA_QUEUE_STATUS: z.string().trim().optional(),
@@ -46,7 +47,12 @@ if (!parsed.success) {
 
 export const config = {
   ...parsed.data,
-  riskyKeywordPattern: /\b(auth|billing|payment|migration|infrastructure|secrets|ci\/cd|ci|cd)\b/i,
+  jiraForceIncludeKeys: (parsed.data.JIRA_FORCE_INCLUDE_KEYS ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean),
+  hardBlockedKeywordPattern:
+    /\b(api[ -]?keys?|secrets?|private keys?|token rotation|database migrations?|schema migrations?|data backfills?|infrastructure migrations?|terraform|kubernetes|helm|deploy(?:ment|ments)?|ci\/cd|github actions|billing|payment)\b/i,
   weakRequirementThreshold: 20
 };
 

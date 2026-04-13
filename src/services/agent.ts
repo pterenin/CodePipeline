@@ -64,10 +64,11 @@ export class AgentService {
     signal?: AbortSignal;
   }): Promise<AgentRunResult> {
     const signal = input.signal ?? input.hooks?.signal;
-    const jiraImagePaths = await this.prepareJiraImages(input.ticket, input.repoPath, signal);
+    const jiraImageAssets = await this.prepareJiraImages(input.ticket, input.repoPath, signal);
     const prompt = buildCodexPrompt({
       ...input,
-      jiraImagePaths,
+      jiraImagePaths: jiraImageAssets.localPaths,
+      ...(jiraImageAssets.manifestPath ? { jiraImageManifestPath: jiraImageAssets.manifestPath } : {}),
     });
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-run-"));
     const outputPath = path.join(tempDir, "last-message.txt");
@@ -165,9 +166,13 @@ export class AgentService {
     }
   }
 
-  private async prepareJiraImages(ticket: JiraTicket, repoPath: string, signal?: AbortSignal): Promise<string[]> {
+  private async prepareJiraImages(
+    ticket: JiraTicket,
+    repoPath: string,
+    signal?: AbortSignal,
+  ): Promise<{ localPaths: string[]; manifestPath?: string }> {
     if (!ticket.imageAttachments?.length) {
-      return [];
+      return { localPaths: [] };
     }
 
     const imageRoot = path.join(repoPath, ".jira-assets", ticket.key);
@@ -204,7 +209,22 @@ export class AgentService {
       }),
     );
 
-    return localPaths.filter(Boolean);
+    const savedPaths = localPaths.filter(Boolean);
+    const manifestPath = path.join(imageRoot, "README.txt");
+    const manifestBody = [
+      `Jira image assets for ${ticket.key}`,
+      "",
+      "These files were downloaded from Jira attachments so the implementation agent can inspect screenshots locally.",
+      "Open the image files directly when visual context matters.",
+      "",
+      ...savedPaths.map((filePath, index) => `${index + 1}. ${filePath}`),
+    ].join("\n");
+    await fs.writeFile(manifestPath, manifestBody, "utf8");
+
+    return {
+      localPaths: savedPaths,
+      manifestPath,
+    };
   }
 }
 
@@ -214,6 +234,7 @@ function buildCodexPrompt(input: {
   mode: "implementation" | "repair";
   validation?: ValidationResult;
   jiraImagePaths: string[];
+  jiraImageManifestPath?: string;
 }): string {
   const validationSummary = input.validation
     ? [
@@ -249,10 +270,12 @@ function buildCodexPrompt(input: {
     `Ticket summary: ${input.ticket.summary}`,
     `Ticket description:\n${input.ticket.description || "(empty)"}`,
     `Acceptance criteria:\n${input.ticket.acceptanceCriteria ?? "(not explicitly provided)"}`,
+    `Jira screenshot manifest:\n${input.jiraImageManifestPath ?? "(none)"}`,
     `Jira image attachments saved locally:\n${input.jiraImagePaths.join("\n") || "(none)"}`,
     `Recent human Jira comments:\n${input.ticket.recentHumanComments?.join("\n\n---\n\n") ?? "(none)"}`,
     validationSummary,
     "",
+    "If Jira screenshots are provided, inspect the local image files or manifest before editing the UI they describe.",
     "Before you finish:",
     "1. Verify the ticketed surface was actually edited or intentionally justified.",
     "2. Run focused checks when feasible.",

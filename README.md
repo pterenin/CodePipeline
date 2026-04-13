@@ -5,7 +5,7 @@
 The first version is intentionally cautious:
 
 - It only processes issues returned by a configurable JQL filter.
-- It skips tickets with weak requirements or risky keywords.
+- It skips tickets with weak requirements or hard-blocked keywords such as secrets, infrastructure, or deployment work.
 - It never runs more than one ticket at a time.
 - It creates draft pull requests by default.
 - It can optionally commit directly to a non-`main` base branch after validation.
@@ -76,6 +76,7 @@ npm run dev
 - `JIRA_PROJECT_KEY`: Simpler project-based queue configuration if you do not want to provide a full JQL string.
 - `JIRA_QUEUE_LABEL`: Optional label filter used with `JIRA_PROJECT_KEY`. Defaults to `ai-ready`.
 - `JIRA_QUEUE_STATUS`: Optional status filter used with `JIRA_PROJECT_KEY`.
+- `JIRA_FORCE_INCLUDE_KEYS`: Optional comma-separated Jira issue keys that should be included even if they do not match the normal queue label or status filters.
 - `JIRA_JQL`: Optional full JQL override. If set, it takes precedence over the project-based settings.
   The service still automatically excludes tickets already labeled `ai-done`.
 
@@ -146,7 +147,7 @@ For each run, the service:
 
 1. Reads the next issue from Jira using either the configured full JQL or a generated project-based queue query.
    Image attachments on the issue are downloaded into a git-ignored local folder and made available to Codex during the run.
-2. Applies safety checks for missing requirements and risky keywords.
+2. Applies safety checks for missing requirements and hard-blocked keywords.
 3. Refreshes a persistent local mirror of the target repository and creates a fresh per-ticket git worktree.
 4. Creates a branch named `ai/JIRA-123-short-slug`.
 5. Launches Codex CLI inside the prepared git worktree so the agent can inspect the repository directly, edit files locally, and run focused commands before stopping.

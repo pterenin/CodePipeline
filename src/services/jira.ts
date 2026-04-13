@@ -241,11 +241,15 @@ function toAdfDocument(text: string): {
 }
 
 function buildJiraQuery(config: AppConfig): string {
+  const explicitIncludeClause = buildExplicitIncludeClause(config.jiraForceIncludeKeys);
+
   if (config.JIRA_JQL) {
-    return `(${config.JIRA_JQL}) AND (labels is EMPTY OR labels not in (ai-done))`;
+    const { query, orderBy } = splitJqlOrderBy(config.JIRA_JQL);
+    const baseQuery = combineQueueClauses([query, explicitIncludeClause]);
+    return `${baseQuery} AND (labels is EMPTY OR labels not in (ai-done))${orderBy ? ` ${orderBy}` : ""}`;
   }
 
-  const parts = [`project = ${config.JIRA_PROJECT_KEY}`, `(labels is EMPTY OR labels not in (ai-done))`];
+  const parts = [`project = ${config.JIRA_PROJECT_KEY}`];
 
   if (config.JIRA_QUEUE_LABEL) {
     parts.push(`labels = ${quoteJqlValueIfNeeded(config.JIRA_QUEUE_LABEL)}`);
@@ -255,7 +259,40 @@ function buildJiraQuery(config: AppConfig): string {
     parts.push(`status = ${quoteJqlValueIfNeeded(config.JIRA_QUEUE_STATUS)}`);
   }
 
-  return `${parts.join(" AND ")} ORDER BY priority DESC, created ASC`;
+  return `${combineQueueClauses([parts.join(" AND "), explicitIncludeClause])} AND (labels is EMPTY OR labels not in (ai-done)) ORDER BY priority DESC, created ASC`;
+}
+
+function combineQueueClauses(clauses: Array<string | undefined>): string {
+  const populated = clauses.filter(Boolean);
+  if (populated.length === 0) {
+    return "";
+  }
+
+  if (populated.length === 1) {
+    return `(${populated[0]})`;
+  }
+
+  return `(${populated.map((clause) => `(${clause})`).join(" OR ")})`;
+}
+
+function buildExplicitIncludeClause(keys: string[]): string | undefined {
+  if (keys.length === 0) {
+    return undefined;
+  }
+
+  return `key in (${keys.map((key) => quoteJqlValueIfNeeded(key)).join(", ")})`;
+}
+
+function splitJqlOrderBy(jql: string): { query: string; orderBy?: string } {
+  const match = jql.match(/^(.*?)(\s+ORDER\s+BY\s+[\s\S]+)$/i);
+  if (!match) {
+    return { query: jql.trim() };
+  }
+
+  const query = match[1]?.trim() ?? jql.trim();
+  const orderBy = match[2]?.trim();
+
+  return orderBy ? { query, orderBy } : { query };
 }
 
 function quoteJqlValueIfNeeded(value: string): string {

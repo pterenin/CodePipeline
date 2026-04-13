@@ -120,8 +120,6 @@ export class GitService {
       "origin",
       `+refs/heads/${this.config.GIT_BASE_BRANCH}:refs/remotes/origin/${this.config.GIT_BASE_BRANCH}`
     );
-    await mirrorGit.checkout(["-B", this.config.GIT_BASE_BRANCH, `origin/${this.config.GIT_BASE_BRANCH}`]);
-    await mirrorGit.reset(["--hard", `origin/${this.config.GIT_BASE_BRANCH}`]);
   }
 
   private async resolveUniqueBranchName(

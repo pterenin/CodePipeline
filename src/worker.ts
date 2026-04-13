@@ -7,7 +7,7 @@ import { GitHubService } from "./services/github.js";
 import { JiraService } from "./services/jira.js";
 import { ValidatorService } from "./services/validator.js";
 import { Logger } from "./utils/logger.js";
-import { hasStrongRequirements } from "./utils/text.js";
+import { evaluateTicketGuardrails } from "./utils/guardrails.js";
 
 export class Worker {
   private readonly logger = new Logger("worker");
@@ -489,16 +489,7 @@ export class Worker {
   }
 
   private evaluateGuardrails(ticket: JiraTicket): string | null {
-    const combinedText = `${ticket.summary}\n${ticket.description}\n${ticket.acceptanceCriteria ?? ""}`;
-    if (this.config.riskyKeywordPattern.test(combinedText)) {
-      return "Ticket contains risky keywords and is outside automation scope.";
-    }
-
-    if (!hasStrongRequirements(combinedText, this.config.weakRequirementThreshold)) {
-      return "Ticket requirements are too weak or incomplete for safe automation.";
-    }
-
-    return null;
+    return evaluateTicketGuardrails(ticket, this.config);
   }
 
   private async safeJiraComment(ticketKey: string, body: string): Promise<void> {
