@@ -132,7 +132,7 @@ export class JiraService {
   async addComment(ticketKey: string, body: string): Promise<void> {
     this.logger.info(`Adding Jira comment to ${ticketKey}`);
     await this.client.post(`/rest/api/3/issue/${ticketKey}/comment`, {
-      body: toAdfDocument(prefixAiAgentComment(body))
+      body: toAdfDocument(prefixAutomationComment(body, this.config.JIRA_COMMENT_PREFIX))
     });
   }
 
@@ -149,18 +149,23 @@ export class JiraService {
     });
   }
 
-  async transitionToInReview(ticketKey: string): Promise<boolean> {
-    this.logger.info(`Attempting Jira In Review transition for ${ticketKey}`);
+  async transitionToReviewStatus(ticketKey: string): Promise<boolean> {
+    this.logger.info(`Attempting Jira transition for ${ticketKey}`, {
+      targetStatus: this.config.JIRA_REVIEW_TRANSITION_NAME
+    });
     const response = await this.client.get<JiraTransitionsResponse>(`/rest/api/3/issue/${ticketKey}/transitions`);
+    const targetStatus = this.config.JIRA_REVIEW_TRANSITION_NAME.toLowerCase();
     const reviewTransition = response.data.transitions.find((transition) => {
       const transitionName = transition.name.toLowerCase();
       const targetName = transition.to?.name?.toLowerCase() ?? "";
 
-      return transitionName === "in review" || targetName === "in review";
+      return transitionName === targetStatus || targetName === targetStatus;
     });
 
     if (!reviewTransition) {
-      this.logger.warn(`No In Review Jira transition available for ${ticketKey}`);
+      this.logger.warn(`No matching Jira transition available for ${ticketKey}`, {
+        targetStatus: this.config.JIRA_REVIEW_TRANSITION_NAME
+      });
       return false;
     }
 
@@ -185,21 +190,25 @@ export class JiraService {
     return response.data.comments
       .map((comment) => normalizeWhitespace(extractPlainText(comment.body)))
       .filter(Boolean)
-      .filter((comment) => !comment.startsWith("AI Agent:"));
+      .filter((comment) => !hasAutomationCommentPrefix(comment, this.config.JIRA_COMMENT_PREFIX));
   }
 }
 
-function prefixAiAgentComment(body: string): string {
+function prefixAutomationComment(body: string, prefix: string): string {
   const trimmed = body.trim();
   if (!trimmed) {
-    return "AI Agent:";
+    return prefix;
   }
 
-  if (trimmed.startsWith("AI Agent:")) {
+  if (hasAutomationCommentPrefix(trimmed, prefix)) {
     return trimmed;
   }
 
-  return `AI Agent: ${trimmed}`;
+  return `${prefix} ${trimmed}`;
+}
+
+function hasAutomationCommentPrefix(body: string, prefix: string): boolean {
+  return body.trimStart().toLowerCase().startsWith(prefix.toLowerCase());
 }
 
 function toAdfDocument(text: string): {
@@ -239,7 +248,7 @@ function buildJiraQuery(config: AppConfig): string {
   if (config.JIRA_JQL) {
     const { query, orderBy } = splitJqlOrderBy(config.JIRA_JQL);
     const baseQuery = combineQueueClauses([query, explicitIncludeClause]);
-    return `${baseQuery} AND (labels is EMPTY OR labels not in (ai-done))${orderBy ? ` ${orderBy}` : ""}`;
+    return `${baseQuery} AND (labels is EMPTY OR labels not in (${quoteJqlValueIfNeeded(config.JIRA_DONE_LABEL)}))${orderBy ? ` ${orderBy}` : ""}`;
   }
 
   const parts = [`project = ${config.JIRA_PROJECT_KEY}`];
@@ -252,7 +261,7 @@ function buildJiraQuery(config: AppConfig): string {
     parts.push(`status = ${quoteJqlValueIfNeeded(config.JIRA_QUEUE_STATUS)}`);
   }
 
-  return `${combineQueueClauses([parts.join(" AND "), explicitIncludeClause])} AND (labels is EMPTY OR labels not in (ai-done)) ORDER BY priority DESC, created ASC`;
+  return `${combineQueueClauses([parts.join(" AND "), explicitIncludeClause])} AND (labels is EMPTY OR labels not in (${quoteJqlValueIfNeeded(config.JIRA_DONE_LABEL)})) ORDER BY priority DESC, created ASC`;
 }
 
 function combineQueueClauses(clauses: Array<string | undefined>): string {

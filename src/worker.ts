@@ -701,8 +701,8 @@ export class Worker {
       monitor?.completeStep(
         "finalize_jira",
         useDirectCommits
-          ? `Jira ticket was updated with the direct commit, labeled ai-done, and moved to In Review when possible.`
-          : "Jira ticket was updated with the PR, labeled ai-done, and moved to In Review when possible."
+          ? `Jira ticket was updated with the direct commit, labeled ${this.config.JIRA_DONE_LABEL}, and moved to ${this.config.JIRA_REVIEW_TRANSITION_NAME} when possible.`
+          : `Jira ticket was updated with the PR, labeled ${this.config.JIRA_DONE_LABEL}, and moved to ${this.config.JIRA_REVIEW_TRANSITION_NAME} when possible.`
       );
 
       this.logger.info("Ticket processed successfully", {
@@ -749,17 +749,17 @@ export class Worker {
 
   private async safeAddDoneLabel(ticketKey: string): Promise<void> {
     try {
-      await this.jiraService.addLabel(ticketKey, "ai-done");
+      await this.jiraService.addLabel(ticketKey, this.config.JIRA_DONE_LABEL);
     } catch (error) {
-      this.logger.warn(`Failed to add ai-done label for ${ticketKey}`, error);
+      this.logger.warn(`Failed to add ${this.config.JIRA_DONE_LABEL} label for ${ticketKey}`, error);
     }
   }
 
   private async safeTransitionToInReview(ticketKey: string): Promise<void> {
     try {
-      await this.jiraService.transitionToInReview(ticketKey);
+      await this.jiraService.transitionToReviewStatus(ticketKey);
     } catch (error) {
-      this.logger.warn(`Failed to transition ${ticketKey} to In Review`, error);
+      this.logger.warn(`Failed to transition ${ticketKey} to ${this.config.JIRA_REVIEW_TRANSITION_NAME}`, error);
     }
   }
 

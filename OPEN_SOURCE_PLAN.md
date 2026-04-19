@@ -33,13 +33,13 @@ This document tracks the work needed to make CodePipeline a healthy public repos
 
 ## Phase 2: Productization
 
-- [ ] Make Jira success label configurable instead of hardcoding `ai-done`
-- [ ] Make the Jira follow-up transition target configurable instead of hardcoding `In Review`
-- [ ] Make the Jira comment prefix configurable instead of hardcoding `AI Agent:`
+- [x] Make Jira success label configurable instead of hardcoding `ai-done`
+- [x] Make the Jira follow-up transition target configurable instead of hardcoding `In Review`
+- [x] Make the Jira comment prefix configurable instead of hardcoding `AI Agent:`
 - [ ] Make validation commands configurable per target repository
 - [ ] Add a safer dry-run mode for setup verification
 - [ ] Bundle dashboard assets locally instead of loading React from a CDN at runtime
-- [ ] Add a Docker-based deployment path
+- [x] Add a Docker-based deployment path
 
 ## Phase 3: Trust And Maintenance
 

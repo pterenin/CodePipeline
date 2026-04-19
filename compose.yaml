@@ -1,0 +1,13 @@
+services:
+  codepipeline:
+    build:
+      context: .
+      args:
+        CODEX_CLI_NPM_VERSION: 0.117.0
+    env_file:
+      - ${CODEPIPELINE_ENV_FILE:-.env}
+    ports:
+      - "${PORT:-3000}:${PORT:-3000}"
+    volumes:
+      - ./workdir:/app/workdir
+    restart: unless-stopped

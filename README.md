@@ -10,6 +10,7 @@ It is built for cautious human-reviewed automation rather than fully autonomous 
 - Single worker process, single target repository, in-memory run state
 - Best fit for teams that already use Jira, GitHub, npm-based repositories, and Codex CLI
 - Open-source readiness work is tracked in [OPEN_SOURCE_PLAN.md](./OPEN_SOURCE_PLAN.md)
+- Docker and history-cleanup guidance live under [docs/](./docs)
 
 ## What It Does
 
@@ -87,6 +88,9 @@ curl -X POST http://localhost:3000/run-next
 - `JIRA_QUEUE_LABEL`: Optional label filter used with `JIRA_PROJECT_KEY`
 - `JIRA_QUEUE_STATUS`: Optional status filter used with `JIRA_PROJECT_KEY`
 - `JIRA_FORCE_INCLUDE_KEYS`: Optional comma-separated Jira keys to force-include
+- `JIRA_DONE_LABEL`: Label added to successful tickets and excluded from future queue picks
+- `JIRA_REVIEW_TRANSITION_NAME`: Jira transition target to try after a successful run
+- `JIRA_COMMENT_PREFIX`: Prefix prepended to automation comments posted back to Jira
 
 ### GitHub
 
@@ -168,11 +172,15 @@ Requests that the active run stop at the next safe interruption point.
 - The project tries to avoid leaking secrets in logs, but logs should still be treated as sensitive operational data.
 - Review every generated pull request before merging.
 
+## Deployment
+
+- Docker and Compose setup: [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md)
+- Git history cleanup guidance before public launch: [docs/HISTORY_CLEANUP.md](./docs/HISTORY_CLEANUP.md)
+
 ## Current Limitations
 
 - Single process, single repository, no database
 - Run history is not persisted across restarts
-- Several Jira conventions are still opinionated, including the success label `ai-done` and the preferred transition target `In Review`
 - Validation commands are currently hardcoded for npm-based repositories
 - The dashboard frontend is embedded in a string-based HTML renderer rather than a standalone frontend build
 
