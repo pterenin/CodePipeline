@@ -26,7 +26,10 @@ const configSchema = z
     OPENAI_API_KEY: z.string().min(1),
     OPENAI_MODEL: z.string().min(1).default("gpt-5.4"),
     CODEX_CLI_PATH: z.string().min(1).default("codex"),
-    VALIDATION_REPAIR_ATTEMPTS: z.coerce.number().int().positive().default(5)
+    VALIDATION_REPAIR_ATTEMPTS: z.coerce.number().int().positive().default(5),
+    VISUAL_REVIEW_ENABLED: z.stringbool().default(true),
+    VISUAL_REVIEW_TIMEOUT_MS: z.coerce.number().int().positive().default(120000),
+    VISUAL_REVIEW_STARTUP_TIMEOUT_MS: z.coerce.number().int().positive().default(120000)
   })
   .superRefine((value, context) => {
     if (!value.JIRA_JQL && !value.JIRA_PROJECT_KEY) {

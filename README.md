@@ -1,107 +1,116 @@
-# Jira AI Worker
+# CodePipeline
 
-`jira-ai-worker` is a conservative Node.js + TypeScript service that processes one Jira issue at a time from a configured queue, prepares an isolated git worktree from a persistent local mirror, asks an OpenAI-backed agent to make the smallest reasonable code change, validates the result, and then either opens a draft GitHub pull request or commits directly to the configured base branch when the run succeeds.
+CodePipeline is an experimental self-hosted Node.js + TypeScript service that pulls one Jira issue at a time from a queue, prepares an isolated git worktree for a target repository, runs Codex CLI against that repository, validates the result, and then opens a draft GitHub pull request or optionally commits directly to a non-`main` base branch.
 
-The first version is intentionally cautious:
+It is built for cautious human-reviewed automation rather than fully autonomous delivery.
 
-- It only processes issues returned by a configurable JQL filter.
-- It skips tickets with weak requirements or hard-blocked keywords such as secrets, infrastructure, or deployment work.
-- It never runs more than one ticket at a time.
-- It creates draft pull requests by default.
-- It can optionally commit directly to a non-`main` base branch after validation.
-- It never merges automatically.
-- It keeps state in memory and targets a single repository.
+## Status
 
-## Project Structure
+- Beta and intentionally conservative
+- Single worker process, single target repository, in-memory run state
+- Best fit for teams that already use Jira, GitHub, npm-based repositories, and Codex CLI
+- Open-source readiness work is tracked in [OPEN_SOURCE_PLAN.md](./OPEN_SOURCE_PLAN.md)
 
-```text
-src/
-  index.ts
-  config.ts
-  types.ts
-  worker.ts
-  services/
-    agent.ts
-    git.ts
-    github.ts
-    jira.ts
-    validator.ts
-  utils/
-    files.ts
-    logger.ts
-    text.ts
-```
+## What It Does
 
-## Requirements
+- Reads issues from Jira using either a full JQL query or a simpler project/label/status queue
+- Applies guardrails to skip weak or unsafe tickets
+- Clones and refreshes a persistent local mirror of the target repository
+- Creates a fresh per-ticket git worktree and branch
+- Runs Codex CLI for context gathering, implementation, review, and validation repair
+- Optionally performs browser-based visual comparison when a ticket includes HTML example assets
+- Creates a draft GitHub pull request after validation, or commits directly to a non-`main` base branch when enabled
+- Posts the result back to Jira
 
-- Node.js 22+ recommended
-- Access to a Jira project and API token
-- Access to the target GitHub repository and a token with PR permissions
-- A git remote for the repository being automated
-- An OpenAI API key
+## Current Assumptions
 
-## Setup
+- Jira is the work queue and GitHub is the delivery destination
+- The target repository uses npm and supports these commands:
+  `npm ci`, `npm run lint`, `npm run build`, `npm run test`
+- Codex CLI is installed locally and can be invoked as `codex` unless `CODEX_CLI_PATH` is set
+- The dashboard is served by the app itself and currently loads React 18 UMD bundles from `unpkg.com`
 
-1. Install dependencies:
+## Quickstart
+
+1. Install dependencies.
 
 ```bash
 npm install
+npm run playwright:install
 ```
 
-2. Copy the environment template and fill in credentials:
+2. Copy the example environment file.
 
 ```bash
 cp .env.example .env
 ```
 
-3. Build or run in watch mode:
+3. Fill in Jira, GitHub, git remote, and OpenAI credentials.
+
+4. Build and start the service.
 
 ```bash
 npm run build
 npm run dev
 ```
 
-## Environment Variables
+5. Open `http://localhost:3000` and start a run from the dashboard, or trigger one manually:
+
+```bash
+curl -X POST http://localhost:3000/run-next
+```
+
+## Requirements
+
+- Node.js 22 or newer
+- Git installed locally
+- Access to a Jira project and API token
+- Access to the target GitHub repository and a token with pull request permissions
+- A git remote for the repository being automated
+- An OpenAI API key
+- Codex CLI installed locally
+
+## Configuration
 
 ### Server
 
-- `PORT`: HTTP port for the Express server.
-- `LOG_LEVEL`: Simple log label for local runs.
+- `PORT`: HTTP port for the Express server
+- `LOG_LEVEL`: Simple log label for local runs
 
 ### Jira
 
-- `JIRA_BASE_URL`: Jira base URL, such as `https://company.atlassian.net`.
-- `JIRA_EMAIL`: Jira user email for basic auth.
-- `JIRA_API_TOKEN`: Jira API token.
-- `JIRA_PROJECT_KEY`: Simpler project-based queue configuration if you do not want to provide a full JQL string.
-- `JIRA_QUEUE_LABEL`: Optional label filter used with `JIRA_PROJECT_KEY`. Defaults to `ai-ready`.
-- `JIRA_QUEUE_STATUS`: Optional status filter used with `JIRA_PROJECT_KEY`.
-- `JIRA_FORCE_INCLUDE_KEYS`: Optional comma-separated Jira issue keys that should be included even if they do not match the normal queue label or status filters.
-- `JIRA_JQL`: Optional full JQL override. If set, it takes precedence over the project-based settings.
-  The service still automatically excludes tickets already labeled `ai-done`.
+- `JIRA_BASE_URL`: Jira base URL such as `https://company.atlassian.net`
+- `JIRA_EMAIL`: Jira user email for basic auth
+- `JIRA_API_TOKEN`: Jira API token
+- `JIRA_JQL`: Optional full JQL override
+- `JIRA_PROJECT_KEY`: Simpler project-based queue configuration when `JIRA_JQL` is not used
+- `JIRA_QUEUE_LABEL`: Optional label filter used with `JIRA_PROJECT_KEY`
+- `JIRA_QUEUE_STATUS`: Optional status filter used with `JIRA_PROJECT_KEY`
+- `JIRA_FORCE_INCLUDE_KEYS`: Optional comma-separated Jira keys to force-include
 
 ### GitHub
 
-- `GITHUB_API_BASE_URL`: Usually `https://api.github.com`.
-- `GITHUB_TOKEN`: GitHub token for creating pull requests.
-- `GITHUB_OWNER`: Repository owner or organization.
-- `GITHUB_REPO`: Repository name.
+- `GITHUB_API_BASE_URL`: Usually `https://api.github.com`
+- `GITHUB_TOKEN`: GitHub token for creating pull requests
+- `GITHUB_OWNER`: Repository owner or organization
+- `GITHUB_REPO`: Repository name
 
-### Git / Workspace
+### Git And Workspace
 
-- `GIT_REMOTE_URL`: Git clone URL for the target repository.
-- `GIT_BASE_BRANCH`: Base branch to branch from and target in pull requests. When direct commits are enabled, this is also the branch that receives validated commits. The worker refreshes the configured branch in the persistent mirror, so changing this value does not require manually deleting `workdir/repo-mirror`.
-- `GIT_DIRECT_COMMITS`: When `true`, validated changes are committed directly to `GIT_BASE_BRANCH` instead of opening a PR. For safety, if `GIT_BASE_BRANCH=main`, direct commits are disabled automatically and the regular PR flow is used.
-- `WORK_ROOT`: Root directory where the persistent repo mirror and per-ticket worktrees are created.
+- `GIT_REMOTE_URL`: Clone URL for the target repository
+- `GIT_BASE_BRANCH`: Base branch to branch from and target in pull requests
+- `GIT_DIRECT_COMMITS`: When `true`, validated changes are committed directly to `GIT_BASE_BRANCH` unless it is `main`
+- `WORK_ROOT`: Root directory where the persistent repo mirror and per-ticket worktrees are created
 
-### OpenAI
+### Codex And Review
 
-- `OPENAI_API_KEY`: API key available to the Codex CLI run.
-- `OPENAI_MODEL`: Model name passed to Codex CLI for implementation and repair passes.
-- `CODEX_CLI_PATH`: Path to the `codex` executable. Defaults to `codex`.
-- `VALIDATION_REPAIR_ATTEMPTS`: Max number of automated repair attempts after validation failures. Defaults to `5`.
-
-The worker explicitly runs Codex CLI with `-c model_reasoning_effort="xhigh"` so ticket analysis, implementation, review, and repair passes do not depend on per-user Codex config.
+- `OPENAI_API_KEY`: API key available to the Codex CLI run
+- `OPENAI_MODEL`: Model passed to Codex CLI
+- `CODEX_CLI_PATH`: Path to the `codex` executable
+- `VALIDATION_REPAIR_ATTEMPTS`: Max number of automated repair attempts after validation failures
+- `VISUAL_REVIEW_ENABLED`: Enables browser-based HTML vs implementation comparison
+- `VISUAL_REVIEW_TIMEOUT_MS`: Per-page timeout for headless browser capture
+- `VISUAL_REVIEW_STARTUP_TIMEOUT_MS`: Timeout while waiting for a local preview server to start
 
 ## API
 
@@ -115,11 +124,11 @@ Returns:
 
 ### `POST /run-next`
 
-Triggers one serialized processing attempt for the next Jira issue that matches the configured Jira queue filter.
+Runs one serialized processing attempt for the next Jira issue in the configured queue.
 
 ### `GET /api/run-state`
 
-Returns the current in-memory workflow snapshot used by the UI.
+Returns the current in-memory workflow snapshot used by the dashboard.
 
 ### `GET /api/run-events`
 
@@ -129,96 +138,52 @@ Streams live workflow updates over Server-Sent Events.
 
 Starts a worker run asynchronously for the browser UI. If a run is already active, the endpoint returns HTTP `409`.
 
-Example response:
+### `POST /api/run/stop`
 
-```json
-{
-  "ok": true,
-  "status": "success",
-  "ticketKey": "JIRA-123",
-  "branchName": "ai/JIRA-123-fix-login-copy",
-  "pullRequestUrl": "https://github.com/org/repo/pull/123"
-}
-```
-
-If a run is already active, the endpoint returns HTTP `409`.
+Requests that the active run stop at the next safe interruption point.
 
 ## Worker Flow
 
-For each run, the service:
+1. Load queued Jira tickets.
+2. Apply automation guardrails.
+3. Refresh the persistent mirror and create a fresh worktree.
+4. Create a branch named `ai/<ticket>-<slug>`.
+5. Run a Codex context pass and refresh `docs/tickets/<ticket>.md`.
+6. Run the implementation pass in the prepared worktree.
+7. Optionally run browser-based visual review when a visual plan exists.
+8. Run a fresh implementation review pass.
+9. Run validation against the target repository:
+   `npm ci`, `npm run lint`, `npm run build`, `npm run test`
+10. Attempt automated repair when validation fails.
+11. Commit and push if changes remain.
+12. Publish the result:
+    draft GitHub pull request by default, or direct commit to a non-`main` base branch when enabled.
+13. Comment back to Jira and try to label and transition the ticket.
 
-1. Reads the next issue from Jira using either the configured full JQL or a generated project-based queue query.
-   Human Jira comments are included in full, and image or HTML example attachments on the issue are downloaded into a git-ignored local folder for the agent.
-2. Applies safety checks for missing requirements and hard-blocked keywords.
-3. Refreshes a persistent local mirror of the target repository and creates a fresh per-ticket git worktree.
-4. Creates a branch named `ai/JIRA-123-short-slug`.
-5. Launches a Codex context pass that analyzes the whole ticket, comments, and local Jira assets, then refreshes `docs/tickets/JIRA-123.md` before implementation begins.
-6. Launches a Codex implementation pass inside the prepared git worktree so the agent can inspect the repository directly, reuse existing components, avoid copying HTML example structure verbatim, edit files locally, and run focused commands before stopping.
-7. Launches a fresh Codex review pass that re-analyzes the ticket against the current implementation, refreshes `docs/tickets/JIRA-123.review.md`, and if needed sends findings back into one automated follow-up implementation pass before validation.
-8. Runs validation commands in order:
-   - `npm ci`
-   - `npm run lint`
-   - `npm run typecheck`
-   - `npm test -- --runInBand`
-9. If validation fails, performs up to the configured number of repair attempts with validation output.
-10. Commits and pushes the branch if files changed.
-11. Publishes the validated change:
-   - by default, pushes a ticket branch and creates a draft GitHub pull request
-   - if `GIT_DIRECT_COMMITS=true` and `GIT_BASE_BRANCH` is not `main`, commits directly to `GIT_BASE_BRANCH`
-12. Comments back to Jira with the PR link or direct commit outcome, labels successful tickets with `ai-done`, and moves them to `In Review` when that transition is available.
+## Security Notes
 
-## Frontend
+- This service executes AI-generated changes against a local checkout of a target repository.
+- Use dedicated service accounts and least-privilege tokens for Jira and GitHub.
+- Treat direct commits as a high-trust mode and keep branch protection enabled on important branches.
+- The project tries to avoid leaking secrets in logs, but logs should still be treated as sensitive operational data.
+- Review every generated pull request before merging.
 
-Open `http://localhost:3000` to use the built-in dashboard. The page starts in an idle state, nothing runs automatically, and a new execution begins only when you press `Start`.
+## Current Limitations
 
-The UI shows:
+- Single process, single repository, no database
+- Run history is not persisted across restarts
+- Several Jira conventions are still opinionated, including the success label `ai-done` and the preferred transition target `In Review`
+- Validation commands are currently hardcoded for npm-based repositories
+- The dashboard frontend is embedded in a string-based HTML renderer rather than a standalone frontend build
 
-- a React-powered dark-mode dashboard
-- a node-based workflow canvas inspired by GitHub Actions and n8n
-- connector lines between pipeline stages
-- a spinner on the currently running step
-- per-step details and outputs as they complete
-- a live event feed and final run result payload
+## Contributing
 
-## Notes on the Agent
+Please read [CONTRIBUTING.md](./CONTRIBUTING.md), [SECURITY.md](./SECURITY.md), and [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) before opening a pull request.
 
-The agent layer is intentionally modular. Today it:
+## Local Checks
 
-- runs Codex CLI directly inside the isolated ticket worktree
-- refreshes a per-ticket markdown context file under `docs/tickets/` before implementation
-- runs a fresh post-implementation review pass and stores structured findings in `docs/tickets/<ticket>.review.md`
-- lets the agent inspect the full repository with local tools instead of relying on a preloaded file bundle
-- includes full human Jira comment history plus downloaded Jira screenshots and HTML examples in the handoff
-- leaves edits in the working tree for the existing validation, git, GitHub, and Jira stages
-- performs repeated repair passes if validation fails, up to the configured limit
-
-You can replace the prompt strategy, the model, or the patch application mechanism later without changing Jira, GitHub, validation, or worker orchestration.
-
-## Operational Notes
-
-- This service does not include a database in v1.
-- Run history is not persisted across restarts.
-- The worker assumes the target repository uses the specified npm-based validation commands.
-- Draft PR creation, direct-commit reporting, and Jira comments are best-effort but surfaced in the API response and logs.
-
-## Local Usage
-
-Start the server:
+Run the repo checks with:
 
 ```bash
-npm run dev
-```
-
-Nothing runs automatically. Start a run from the browser UI or call `POST /run-next`.
-
-Trigger a run:
-
-```bash
-curl -X POST http://localhost:3000/run-next
-```
-
-Check health:
-
-```bash
-curl http://localhost:3000/health
+npm run check
 ```

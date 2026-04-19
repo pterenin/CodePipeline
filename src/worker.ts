@@ -1,11 +1,12 @@
 import type { AppConfig } from "./config.js";
-import type { ImplementationReviewResult, JiraTicket, WorkerRunResult } from "./types.js";
+import type { ImplementationReviewResult, JiraTicket, VisualReviewResult, WorkerRunResult } from "./types.js";
 import type { RunMonitor } from "./run-monitor.js";
 import { AgentService } from "./services/agent.js";
 import { GitService } from "./services/git.js";
 import { GitHubService } from "./services/github.js";
 import { JiraService } from "./services/jira.js";
 import { ValidatorService } from "./services/validator.js";
+import { VisualReviewService } from "./services/visual-review.js";
 import { Logger } from "./utils/logger.js";
 import { evaluateTicketGuardrails } from "./utils/guardrails.js";
 
@@ -16,6 +17,7 @@ export class Worker {
   private readonly gitService: GitService;
   private readonly validatorService: ValidatorService;
   private readonly agentService: AgentService;
+  private readonly visualReviewService: VisualReviewService;
   private isRunning = false;
   private stopRequested = false;
   private abortController: AbortController | undefined;
@@ -26,6 +28,7 @@ export class Worker {
     this.gitService = new GitService(config);
     this.validatorService = new ValidatorService();
     this.agentService = new AgentService(config);
+    this.visualReviewService = new VisualReviewService(config);
   }
 
   get running(): boolean {
@@ -324,6 +327,24 @@ export class Worker {
       );
       let implementationSummary = initialAgentRun.summary;
 
+      let visualReviewRun = await this.runVisualReview(ticket, repoPath, monitor, "Running isolated browser comparison against the HTML example.");
+      if (visualReviewRun.decision === "needs_human_review") {
+        const message = visualReviewRun.reason ?? visualReviewRun.summary;
+        this.logger.warn("Visual review requires human review", {
+          ticketKey: ticket.key,
+          reason: message
+        });
+        monitor?.failStep("visual_review", message, summarizeVisualReview(visualReviewRun));
+        monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
+        return {
+          ok: true,
+          status: "needs_human_review",
+          ticketKey: ticket.key,
+          branchName,
+          message
+        };
+      }
+
       this.logger.info("Running fresh post-implementation review", { ticketKey: ticket.key });
       monitor?.startStep("review_implementation", "Running a fresh review pass against the implemented ticket.");
       let reviewRun = await this.agentService.reviewTicketImplementation(ticket, repoPath, {
@@ -415,6 +436,26 @@ export class Worker {
           followUpRun.changedFiles.length > 0 ? followUpRun.changedFiles : undefined
         );
         implementationSummary = `${implementationSummary}\nFollow-up: ${followUpRun.summary}`;
+
+        if (visualReviewRun.decision !== "skipped") {
+          visualReviewRun = await this.runVisualReview(ticket, repoPath, monitor, "Re-running isolated browser comparison after follow-up changes.");
+          if (visualReviewRun.decision === "needs_human_review") {
+            const message = visualReviewRun.reason ?? visualReviewRun.summary;
+            this.logger.warn("Visual review after follow-up requires human review", {
+              ticketKey: ticket.key,
+              reason: message
+            });
+            monitor?.failStep("visual_review", message, summarizeVisualReview(visualReviewRun));
+            monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
+            return {
+              ok: true,
+              status: "needs_human_review",
+              ticketKey: ticket.key,
+              branchName,
+              message
+            };
+          }
+        }
 
         monitor?.startStep("review_implementation", "Confirming the follow-up changes against the ticket.");
         reviewRun = await this.agentService.reviewTicketImplementation(ticket, repoPath, {
@@ -605,7 +646,14 @@ export class Worker {
         monitor?.startStep("finalize_jira", "Posting direct commit details back to Jira and labeling the ticket.");
         await this.safeJiraComment(
           ticket.key,
-          `Automation completed successfully.\n\nDirect commit branch: ${this.config.GIT_BASE_BRANCH}\nCommit: ${commitSha}`
+          buildSuccessJiraComment({
+            implementationSummary,
+            review: reviewRun,
+            visualReview: visualReviewRun,
+            validation,
+            directCommitBranch: this.config.GIT_BASE_BRANCH,
+            commitSha
+          })
         );
         successMessage = `Validated changes were committed directly to ${this.config.GIT_BASE_BRANCH}.`;
       } else {
@@ -634,7 +682,15 @@ export class Worker {
         monitor?.startStep("finalize_jira", "Posting PR details back to Jira and labeling the ticket.");
         await this.safeJiraComment(
           ticket.key,
-          `Automation completed successfully.\n\nDraft PR: ${pullRequest.url}\nBranch: ${branchName}\nCommit: ${commitSha}`
+          buildSuccessJiraComment({
+            implementationSummary,
+            review: reviewRun,
+            visualReview: visualReviewRun,
+            validation,
+            pullRequestUrl: pullRequest.url,
+            branchName,
+            commitSha
+          })
         );
         successMessage = "Draft pull request created successfully.";
       }
@@ -724,6 +780,26 @@ export class Worker {
         : new WorkerStoppedError();
     }
   }
+
+  private async runVisualReview(ticket: JiraTicket, repoPath: string, monitor?: RunMonitor, detail?: string) {
+    this.logger.info("Running visual review", { ticketKey: ticket.key });
+    monitor?.startStep("visual_review", detail ?? "Running isolated browser comparison.");
+    const result = await this.visualReviewService.run(ticket, repoPath, {
+      onProgress: (message) => {
+        monitor?.setStepDetail("visual_review", message);
+      },
+      ...(this.abortController?.signal ? { signal: this.abortController.signal } : {})
+    });
+    this.throwIfStopped();
+
+    if (result.decision === "skipped") {
+      monitor?.skipStep("visual_review", result.summary, summarizeVisualReview(result));
+      return result;
+    }
+
+    monitor?.completeStep("visual_review", result.summary, summarizeVisualReview(result));
+    return result;
+  }
 }
 
 function summarizeValidation(validation: WorkerRunResult["validation"]): string[] {
@@ -742,6 +818,94 @@ function summarizeReview(review: ImplementationReviewResult): string[] {
     review.findings.length > 0 ? review.findings.map((finding) => `Finding: ${finding}`) : ["Finding: none"];
 
   return [`Review doc: ${review.reviewPath}`, ...findingLines];
+}
+
+function summarizeVisualReview(review: VisualReviewResult): string[] {
+  const findingLines =
+    review.findings.length > 0 ? review.findings.map((finding) => `Finding: ${finding}`) : ["Finding: none"];
+  const artifactLines =
+    review.artifactPaths.length > 0 ? review.artifactPaths.map((artifactPath) => `Artifact: ${artifactPath}`) : ["Artifact: none"];
+
+  return [`Visual report: ${review.reportPath}`, ...findingLines, ...artifactLines];
+}
+
+function buildSuccessJiraComment(input: {
+  implementationSummary: string;
+  review: ImplementationReviewResult;
+  visualReview: VisualReviewResult;
+  validation: NonNullable<WorkerRunResult["validation"]>;
+  pullRequestUrl?: string;
+  branchName?: string;
+  directCommitBranch?: string;
+  commitSha: string;
+}): string {
+  const deliveryLines = input.pullRequestUrl
+    ? [
+        `Draft PR: ${input.pullRequestUrl}`,
+        `Branch: ${input.branchName ?? "(unknown)"}`,
+        `Commit: ${input.commitSha}`
+      ]
+    : [
+        `Direct commit branch: ${input.directCommitBranch ?? "(unknown)"}`,
+        `Commit: ${input.commitSha}`
+      ];
+
+  const qualityLines = [
+    `Automated review agents: passed. ${input.review.summary}`,
+    formatVisualReviewLine(input.visualReview),
+    ...buildValidationSummaryLines(input.validation)
+  ];
+
+  return [
+    "Automation completed successfully.",
+    "",
+    "Summary of changes:",
+    input.implementationSummary,
+    "",
+    "Quality checks:",
+    ...qualityLines.map((line) => `- ${line}`),
+    "",
+    "Delivery:",
+    ...deliveryLines.map((line) => `- ${line}`)
+  ].join("\n");
+}
+
+function formatVisualReviewLine(review: VisualReviewResult): string {
+  if (review.decision === "approved") {
+    return `Visual review: passed. ${review.summary}`;
+  }
+
+  if (review.decision === "skipped") {
+    return `Visual review: skipped. ${review.summary}`;
+  }
+
+  return `Visual review: ${review.decision}. ${review.summary}`;
+}
+
+function buildValidationSummaryLines(validation: NonNullable<WorkerRunResult["validation"]>): string[] {
+  const lines: string[] = [];
+  const stepsByCommand = new Map(validation.steps.map((step) => [step.command, step]));
+
+  const installStep = stepsByCommand.get("npm ci");
+  if (installStep?.success) {
+    lines.push("Dependency install: passed (`npm ci`).");
+  }
+
+  const buildStep = stepsByCommand.get("npm run build");
+  if (buildStep?.success) {
+    lines.push("Build: passed (`npm run build`).");
+  }
+
+  const testStep = stepsByCommand.get("npm run test");
+  if (testStep?.success) {
+    lines.push("Unit tests: passed (`npm run test`).");
+  }
+
+  if (lines.length === 0) {
+    lines.push("Validation: passed.");
+  }
+
+  return lines;
 }
 
 class WorkerStoppedError extends Error {

@@ -950,8 +950,8 @@ export function renderAppHtml(): string {
         {
           id: "execute",
           label: "Execute",
-          description: "Implement the change, review it, and validate until the branch is green.",
-          stepIds: ["implement_changes", "review_implementation", "validation"]
+          description: "Implement the change, run browser-based comparison, review it, and validate until the branch is green.",
+          stepIds: ["implement_changes", "visual_review", "review_implementation", "validation"]
         },
         {
           id: "publish",
@@ -990,6 +990,11 @@ export function renderAppHtml(): string {
           scope: "ticket",
           phase: "Execute",
           helper: "Applies coding passes from the documented ticket context, including any follow-up fixes from review."
+        },
+        visual_review: {
+          scope: "ticket",
+          phase: "Execute",
+          helper: "Runs a headless browser comparison between the HTML example and the current implementation preview in an isolated process."
         },
         review_implementation: {
           scope: "ticket",

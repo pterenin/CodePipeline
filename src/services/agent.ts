@@ -137,10 +137,14 @@ export class AgentService {
   }): Promise<AgentRunResult> {
     const signal = input.signal ?? input.hooks?.signal;
     const ticketContextPath = buildTicketContextPath(input.ticket.key);
+    const visualReviewPlanPath = buildVisualReviewPlanPath(input.ticket.key);
+    const visualReviewReportPath = buildVisualReviewReportPath(input.ticket.key);
     const jiraAssets = await this.prepareJiraAssets(input.ticket, input.repoPath, signal);
     const prompt = buildCodexPrompt({
       ...input,
       ticketContextPath,
+      visualReviewPlanPath,
+      visualReviewReportPath,
       jiraImagePaths: jiraAssets.imagePaths,
       jiraHtmlExamplePaths: jiraAssets.htmlExamplePaths,
       inlineHtmlExamples: extractInlineHtmlExamples(input.ticket),
@@ -357,6 +361,8 @@ function buildCodexPrompt(input: {
   mode: "context" | "implementation" | "review" | "repair";
   validation?: ValidationResult;
   ticketContextPath: string;
+  visualReviewPlanPath: string;
+  visualReviewReportPath: string;
   reviewFindingsPath?: string;
   jiraImagePaths: string[];
   jiraHtmlExamplePaths: string[];
@@ -387,6 +393,18 @@ function buildCodexPrompt(input: {
           `Refresh this exact file: ${input.ticketContextPath}`,
           "The markdown must capture the full ticket context: summary, description, acceptance criteria, all human comments, image and HTML example assets, files/components inspected, reusable components to reuse, smaller reusable components to create if needed, separation-of-concerns/readability notes, and a concrete implementation plan.",
           "If the ticket includes an HTML example inline or as a downloaded HTML file, search the repository for the matching surface or example and record whether it already exists.",
+          `Also create or refresh this exact visual review plan JSON: ${input.visualReviewPlanPath}`,
+          "The visual review plan must always be valid JSON. When automated browser comparison is practical, enable it and provide the HTML example target plus the implementation preview command, working directory, URL, route selector, and viewport needed for headless review. When it is not practical, still create the file with `enabled: false` and a short reason.",
+          "Use this visual review plan shape:",
+          "{",
+          '  "enabled": true,',
+          '  "reason": "short explanation",',
+          '  "viewport": { "width": 1440, "height": 1024 },',
+          '  "fullPage": true,',
+          '  "example": { "type": "file", "path": ".jira-assets/TICKET/example.html", "readySelector": "body", "screenshotSelector": "body", "delayMs": 200 },',
+          '  "implementation": { "type": "url", "url": "http://127.0.0.1:4173/route", "startCommand": "npm run dev -- --host 127.0.0.1 --port 4173", "workingDirectory": ".", "readySelector": "#root", "screenshotSelector": "#root", "delayMs": 400 },',
+          '  "diff": { "maxDiffRatio": 0.03, "maxDiffPixels": 12000 }',
+          "}",
           "In this mode, only update documentation under docs/. Do not implement product code yet.",
           "End with a short plain-text summary that mentions the ticket context markdown path you refreshed.",
         ]
@@ -394,10 +412,12 @@ function buildCodexPrompt(input: {
         ? [
             "Read the ticket context markdown first and use it as your working memory before you implement anything.",
             `Ticket context markdown path: ${input.ticketContextPath}`,
+            `Visual review plan path: ${input.visualReviewPlanPath}`,
             "Analyze the whole ticket, all human comments, and any local Jira assets before deciding what to edit.",
             "If the ticket includes an HTML example inline or as a downloaded HTML attachment, check whether that example already exists in the repository.",
             "When aligning UI to an HTML example, do not copy the example's exact HTML structure. Reuse existing component composition, update styles and UI behavior accordingly, and extract smaller reusable components when that improves reuse, readability, or separation of concerns.",
             "Prefer existing reusable components before creating new ones. If new pieces are needed, keep them small, composable, and aligned with best React practices.",
+            "If a visual review plan JSON exists, keep it accurate whenever your implementation changes the local preview command, route, selector, or viewport assumptions used for browser comparison.",
             ...(input.reviewFindingsPath
               ? [
                   `Before editing, read and address the post-implementation review findings in: ${input.reviewFindingsPath}`,
@@ -409,6 +429,7 @@ function buildCodexPrompt(input: {
           ? [
               "You are a fresh reviewer for the already-implemented ticket. Re-analyze the ticket, comments, context markdown, local Jira assets, and current repository changes from scratch.",
               `Read the ticket context markdown first: ${input.ticketContextPath}`,
+              `If it exists, read the visual review report before judging the implementation: ${input.visualReviewReportPath}`,
               `Refresh this exact review file: ${buildImplementationReviewPath(input.ticket.key)}`,
               "In review mode, only update the review markdown under docs/. Do not implement product code.",
               "Review whether the current implementation fully addresses the ticket, comments, UI expectations, and any HTML example guidance.",
@@ -430,6 +451,7 @@ function buildCodexPrompt(input: {
         : [
             "Re-read the ticket context markdown before repairing validation failures.",
             `Ticket context markdown path: ${input.ticketContextPath}`,
+            `If it exists, read the visual review report before repairing: ${input.visualReviewReportPath}`,
             "Keep the implementation aligned with the documented plan, reusable component strategy, and any HTML example constraints.",
             ...(input.reviewFindingsPath
               ? [`Also read the post-implementation review findings in: ${input.reviewFindingsPath}`]
@@ -454,6 +476,8 @@ function buildCodexPrompt(input: {
     `Ticket summary: ${input.ticket.summary}`,
     `Ticket description:\n${input.ticket.description || "(empty)"}`,
     `Acceptance criteria:\n${input.ticket.acceptanceCriteria ?? "(not explicitly provided)"}`,
+    `Visual review plan path:\n${input.visualReviewPlanPath}`,
+    `Visual review report path:\n${input.visualReviewReportPath}`,
     `Jira asset manifest:\n${input.jiraAssetManifestPath ?? "(none)"}`,
     `Jira image attachments saved locally:\n${input.jiraImagePaths.join("\n") || "(none)"}`,
     `Jira HTML example attachments saved locally:\n${input.jiraHtmlExamplePaths.join("\n") || "(none)"}`,
@@ -501,6 +525,14 @@ async function ensureGitExclude(repoPath: string, entry: string): Promise<void> 
 
 function buildTicketContextPath(ticketKey: string): string {
   return path.posix.join("docs", "tickets", `${ticketKey}.md`);
+}
+
+function buildVisualReviewPlanPath(ticketKey: string): string {
+  return path.posix.join("docs", "tickets", `${ticketKey}.visual-plan.json`);
+}
+
+function buildVisualReviewReportPath(ticketKey: string): string {
+  return path.posix.join("docs", "tickets", `${ticketKey}.visual-review.md`);
 }
 
 function buildImplementationReviewPath(ticketKey: string): string {

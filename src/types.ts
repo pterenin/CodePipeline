@@ -53,6 +53,15 @@ export interface ImplementationReviewResult {
   reason?: string;
 }
 
+export interface VisualReviewResult {
+  decision: "approved" | "needs_follow_up" | "skipped" | "needs_human_review";
+  summary: string;
+  findings: string[];
+  reportPath: string;
+  artifactPaths: string[];
+  reason?: string;
+}
+
 export interface AgentFileEdit {
   path: string;
   content: string;
@@ -93,6 +102,7 @@ export const WORKFLOW_STEP_DEFINITIONS = [
   { id: "prepare_repository", label: "Prepare Repo" },
   { id: "document_context", label: "Document Context" },
   { id: "implement_changes", label: "Implement" },
+  { id: "visual_review", label: "Visual Review" },
   { id: "review_implementation", label: "Review" },
   { id: "validation", label: "Validate" },
   { id: "commit_push", label: "Commit & Push" },
