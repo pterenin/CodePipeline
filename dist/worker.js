@@ -4,7 +4,7 @@ import { GitHubService } from "./services/github.js";
 import { JiraService } from "./services/jira.js";
 import { ValidatorService } from "./services/validator.js";
 import { Logger } from "./utils/logger.js";
-import { hasStrongRequirements } from "./utils/text.js";
+import { evaluateTicketGuardrails } from "./utils/guardrails.js";
 export class Worker {
     config;
     logger = new Logger("worker");
@@ -190,8 +190,50 @@ export class Worker {
         monitor?.completeStep("prepare_repository", `Worktree ready on branch ${branchName}.`, [repoPath]);
         try {
             this.throwIfStopped();
+            this.logger.info("Running agent ticket-context pass", { ticketKey: ticket.key });
+            monitor?.startStep("document_context", "Analyzing the ticket and refreshing the ticket context markdown.");
+            const contextRun = await this.agentService.documentTicketContext(ticket, repoPath, {
+                onProgress: (message) => {
+                    monitor?.setStepDetail("document_context", message);
+                },
+                ...(this.abortController?.signal ? { signal: this.abortController.signal } : {})
+            });
+            this.throwIfStopped();
+            if (contextRun.decision === "needs_human_review") {
+                const message = contextRun.reason ?? contextRun.summary;
+                this.logger.warn("Ticket context documentation requires human review", {
+                    ticketKey: ticket.key,
+                    reason: message
+                });
+                monitor?.failStep("document_context", message, contextRun.changedFiles);
+                monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
+                return {
+                    ok: true,
+                    status: "needs_human_review",
+                    ticketKey: ticket.key,
+                    branchName,
+                    message
+                };
+            }
+            if (contextRun.decision === "no_changes") {
+                const message = contextRun.reason ?? "Agent did not refresh the ticket context markdown.";
+                this.logger.warn("Ticket context documentation produced no changes", {
+                    ticketKey: ticket.key,
+                    reason: message
+                });
+                monitor?.failStep("document_context", message);
+                monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
+                return {
+                    ok: false,
+                    status: "failed",
+                    ticketKey: ticket.key,
+                    branchName,
+                    message
+                };
+            }
+            monitor?.completeStep("document_context", contextRun.summary, contextRun.changedFiles.length > 0 ? contextRun.changedFiles : undefined);
             this.logger.info("Running agent implementation pass", { ticketKey: ticket.key });
-            monitor?.startStep("implement_changes", "Running the implementation agent.");
+            monitor?.startStep("implement_changes", "Running the implementation agent from the documented ticket context.");
             const initialAgentRun = await this.agentService.implementTicket(ticket, repoPath, {
                 onProgress: (message) => {
                     monitor?.setStepDetail("implement_changes", message);
@@ -232,6 +274,125 @@ export class Worker {
                 };
             }
             monitor?.completeStep("implement_changes", initialAgentRun.summary, initialAgentRun.changedFiles.length > 0 ? initialAgentRun.changedFiles : undefined);
+            let implementationSummary = initialAgentRun.summary;
+            this.logger.info("Running fresh post-implementation review", { ticketKey: ticket.key });
+            monitor?.startStep("review_implementation", "Running a fresh review pass against the implemented ticket.");
+            let reviewRun = await this.agentService.reviewTicketImplementation(ticket, repoPath, {
+                onProgress: (message) => {
+                    monitor?.setStepDetail("review_implementation", message);
+                },
+                ...(this.abortController?.signal ? { signal: this.abortController.signal } : {})
+            });
+            this.throwIfStopped();
+            if (reviewRun.decision === "needs_human_review") {
+                const message = reviewRun.reason ?? reviewRun.summary;
+                this.logger.warn("Implementation review requires human review", {
+                    ticketKey: ticket.key,
+                    reason: message
+                });
+                monitor?.failStep("review_implementation", message, reviewRun.changedFiles);
+                monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
+                return {
+                    ok: true,
+                    status: "needs_human_review",
+                    ticketKey: ticket.key,
+                    branchName,
+                    message
+                };
+            }
+            monitor?.completeStep("review_implementation", reviewRun.summary, summarizeReview(reviewRun));
+            if (reviewRun.decision === "needs_follow_up") {
+                const reviewMessage = `${reviewRun.summary} Addressing ${reviewRun.findings.length} review finding(s).`;
+                this.logger.info("Fresh review requested follow-up implementation work", {
+                    ticketKey: ticket.key,
+                    findings: reviewRun.findings
+                });
+                monitor?.log(reviewMessage, "review_implementation");
+                monitor?.startStep("implement_changes", "Addressing post-implementation review findings.");
+                const followUpRun = await this.agentService.implementTicket(ticket, repoPath, {
+                    onProgress: (message) => {
+                        monitor?.setStepDetail("implement_changes", message);
+                    },
+                    reviewFindingsPath: reviewRun.reviewPath,
+                    ...(this.abortController?.signal ? { signal: this.abortController.signal } : {})
+                });
+                this.throwIfStopped();
+                if (followUpRun.decision === "needs_human_review") {
+                    const message = followUpRun.reason ?? followUpRun.summary;
+                    this.logger.warn("Follow-up implementation requires human review", {
+                        ticketKey: ticket.key,
+                        reason: message
+                    });
+                    monitor?.failStep("implement_changes", message, followUpRun.changedFiles);
+                    monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
+                    return {
+                        ok: true,
+                        status: "needs_human_review",
+                        ticketKey: ticket.key,
+                        branchName,
+                        message
+                    };
+                }
+                if (followUpRun.decision === "no_changes") {
+                    const message = followUpRun.reason ?? "Follow-up implementation produced no changes.";
+                    this.logger.warn("Follow-up implementation produced no changes", {
+                        ticketKey: ticket.key,
+                        reason: message
+                    });
+                    monitor?.failStep("implement_changes", message);
+                    monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
+                    return {
+                        ok: false,
+                        status: "failed",
+                        ticketKey: ticket.key,
+                        branchName,
+                        message
+                    };
+                }
+                monitor?.completeStep("implement_changes", followUpRun.summary, followUpRun.changedFiles.length > 0 ? followUpRun.changedFiles : undefined);
+                implementationSummary = `${implementationSummary}\nFollow-up: ${followUpRun.summary}`;
+                monitor?.startStep("review_implementation", "Confirming the follow-up changes against the ticket.");
+                reviewRun = await this.agentService.reviewTicketImplementation(ticket, repoPath, {
+                    onProgress: (message) => {
+                        monitor?.setStepDetail("review_implementation", message);
+                    },
+                    ...(this.abortController?.signal ? { signal: this.abortController.signal } : {})
+                });
+                this.throwIfStopped();
+                if (reviewRun.decision === "needs_human_review") {
+                    const message = reviewRun.reason ?? reviewRun.summary;
+                    this.logger.warn("Confirmation review requires human review", {
+                        ticketKey: ticket.key,
+                        reason: message
+                    });
+                    monitor?.failStep("review_implementation", message, reviewRun.changedFiles);
+                    monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
+                    return {
+                        ok: true,
+                        status: "needs_human_review",
+                        ticketKey: ticket.key,
+                        branchName,
+                        message
+                    };
+                }
+                monitor?.completeStep("review_implementation", reviewRun.summary, summarizeReview(reviewRun));
+                if (reviewRun.decision === "needs_follow_up") {
+                    const message = `Post-implementation review still found unresolved ticket gaps after automated follow-up. See ${reviewRun.reviewPath}.`;
+                    this.logger.warn("Confirmation review still found unresolved findings", {
+                        ticketKey: ticket.key,
+                        findings: reviewRun.findings
+                    });
+                    monitor?.failStep("review_implementation", message, summarizeReview(reviewRun));
+                    monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
+                    return {
+                        ok: true,
+                        status: "needs_human_review",
+                        ticketKey: ticket.key,
+                        branchName,
+                        message
+                    };
+                }
+            }
             this.logger.info("Running validation after implementation", { ticketKey: ticket.key });
             monitor?.startStep("validation", "Running repository validation commands.");
             let validation = await this.runValidationWithMonitor(repoPath, monitor);
@@ -355,7 +516,7 @@ export class Worker {
                     title: prTitle,
                     ticketKey: ticket.key,
                     ticketUrl: ticket.url,
-                    summaryOfChanges: initialAgentRun.summary,
+                    summaryOfChanges: implementationSummary,
                     validation
                 });
                 pullRequestUrl = pullRequest.url;
@@ -370,10 +531,10 @@ export class Worker {
             }
             this.throwIfStopped();
             await this.safeAddDoneLabel(ticket.key);
-            await this.safeTransitionToDone(ticket.key);
+            await this.safeTransitionToInReview(ticket.key);
             monitor?.completeStep("finalize_jira", useDirectCommits
-                ? `Jira ticket was updated with the direct commit, labeled ai-done, and marked done when possible.`
-                : "Jira ticket was updated with the PR, labeled ai-done, and marked done when possible.");
+                ? `Jira ticket was updated with the direct commit, labeled ai-done, and moved to In Review when possible.`
+                : "Jira ticket was updated with the PR, labeled ai-done, and moved to In Review when possible.");
             this.logger.info("Ticket processed successfully", {
                 ticketKey: ticket.key,
                 branchName,
@@ -402,14 +563,7 @@ export class Worker {
         return this.config.GIT_BASE_BRANCH.trim().toLowerCase() !== "main";
     }
     evaluateGuardrails(ticket) {
-        const combinedText = `${ticket.summary}\n${ticket.description}\n${ticket.acceptanceCriteria ?? ""}`;
-        if (this.config.riskyKeywordPattern.test(combinedText)) {
-            return "Ticket contains risky keywords and is outside automation scope.";
-        }
-        if (!hasStrongRequirements(combinedText, this.config.weakRequirementThreshold)) {
-            return "Ticket requirements are too weak or incomplete for safe automation.";
-        }
-        return null;
+        return evaluateTicketGuardrails(ticket, this.config);
     }
     async safeJiraComment(ticketKey, body) {
         try {
@@ -427,12 +581,12 @@ export class Worker {
             this.logger.warn(`Failed to add ai-done label for ${ticketKey}`, error);
         }
     }
-    async safeTransitionToDone(ticketKey) {
+    async safeTransitionToInReview(ticketKey) {
         try {
-            await this.jiraService.transitionToDone(ticketKey);
+            await this.jiraService.transitionToInReview(ticketKey);
         }
         catch (error) {
-            this.logger.warn(`Failed to transition ${ticketKey} to done`, error);
+            this.logger.warn(`Failed to transition ${ticketKey} to In Review`, error);
         }
     }
     async runValidationWithMonitor(repoPath, monitor) {
@@ -460,6 +614,10 @@ function summarizeValidation(validation) {
         const suffix = step.success ? "passed" : `failed (exit ${step.exitCode ?? "unknown"})`;
         return `${step.command}: ${suffix}`;
     });
+}
+function summarizeReview(review) {
+    const findingLines = review.findings.length > 0 ? review.findings.map((finding) => `Finding: ${finding}`) : ["Finding: none"];
+    return [`Review doc: ${review.reviewPath}`, ...findingLines];
 }
 class WorkerStoppedError extends Error {
     constructor() {

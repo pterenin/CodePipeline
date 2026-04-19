@@ -1,7 +1,7 @@
 import axios, { type AxiosInstance } from "axios";
 
 import type { AppConfig } from "../config.js";
-import type { JiraImageAttachment, JiraTicket } from "../types.js";
+import type { JiraHtmlAttachment, JiraImageAttachment, JiraTicket } from "../types.js";
 import { Logger } from "../utils/logger.js";
 import { extractAcceptanceCriteria, normalizeWhitespace } from "../utils/text.js";
 
@@ -91,7 +91,8 @@ export class JiraService {
         const description = normalizeWhitespace(extractPlainText(issue.fields.description));
         const acceptanceCriteria = extractAcceptanceCriteria(description);
         const imageAttachments = extractImageAttachments(issue.fields.attachment);
-        const recentHumanComments = await this.getRecentHumanComments(issue.key);
+        const humanComments = await this.getHumanComments(issue.key);
+        const htmlAttachments = extractHtmlAttachments(issue.fields.attachment);
 
         const ticket: JiraTicket = {
           key: issue.key,
@@ -108,8 +109,12 @@ export class JiraService {
           ticket.imageAttachments = imageAttachments;
         }
 
-        if (recentHumanComments.length > 0) {
-          ticket.recentHumanComments = recentHumanComments;
+        if (htmlAttachments.length > 0) {
+          ticket.htmlAttachments = htmlAttachments;
+        }
+
+        if (humanComments.length > 0) {
+          ticket.humanComments = humanComments;
         }
 
         return ticket;
@@ -144,43 +149,32 @@ export class JiraService {
     });
   }
 
-  async transitionToDone(ticketKey: string): Promise<boolean> {
-    this.logger.info(`Attempting Jira done transition for ${ticketKey}`);
+  async transitionToInReview(ticketKey: string): Promise<boolean> {
+    this.logger.info(`Attempting Jira In Review transition for ${ticketKey}`);
     const response = await this.client.get<JiraTransitionsResponse>(`/rest/api/3/issue/${ticketKey}/transitions`);
-    const doneTransition = response.data.transitions.find((transition) => {
+    const reviewTransition = response.data.transitions.find((transition) => {
       const transitionName = transition.name.toLowerCase();
       const targetName = transition.to?.name?.toLowerCase() ?? "";
-      const categoryKey = transition.to?.statusCategory?.key?.toLowerCase() ?? "";
-      const categoryName = transition.to?.statusCategory?.name?.toLowerCase() ?? "";
 
-      return (
-        categoryKey === "done" ||
-        categoryName === "done" ||
-        transitionName === "done" ||
-        transitionName === "closed" ||
-        transitionName === "resolve issue" ||
-        targetName === "done" ||
-        targetName === "closed" ||
-        targetName === "resolved"
-      );
+      return transitionName === "in review" || targetName === "in review";
     });
 
-    if (!doneTransition) {
-      this.logger.warn(`No done-like Jira transition available for ${ticketKey}`);
+    if (!reviewTransition) {
+      this.logger.warn(`No In Review Jira transition available for ${ticketKey}`);
       return false;
     }
 
     await this.client.post(`/rest/api/3/issue/${ticketKey}/transitions`, {
       transition: {
-        id: doneTransition.id
+        id: reviewTransition.id
       }
     });
 
     return true;
   }
 
-  private async getRecentHumanComments(ticketKey: string): Promise<string[]> {
-    this.logger.info(`Fetching recent Jira comments for ${ticketKey}`);
+  private async getHumanComments(ticketKey: string): Promise<string[]> {
+    this.logger.info(`Fetching Jira comments for ${ticketKey}`);
 
     const response = await this.client.get<JiraCommentResponse>(`/rest/api/3/issue/${ticketKey}/comment`, {
       params: {
@@ -191,8 +185,7 @@ export class JiraService {
     return response.data.comments
       .map((comment) => normalizeWhitespace(extractPlainText(comment.body)))
       .filter(Boolean)
-      .filter((comment) => !comment.startsWith("AI Agent:"))
-      .slice(-5);
+      .filter((comment) => !comment.startsWith("AI Agent:"));
   }
 }
 
@@ -342,6 +335,25 @@ function extractImageAttachments(value: JiraSearchResponse["issues"][number]["fi
       mimeType: attachment.mimeType ?? "application/octet-stream",
       contentUrl: attachment.content ?? "",
       ...(attachment.thumbnail ? { thumbnailUrl: attachment.thumbnail } : {})
+    }))
+    .filter((attachment) => Boolean(attachment.contentUrl));
+}
+
+function extractHtmlAttachments(value: JiraSearchResponse["issues"][number]["fields"]["attachment"]): JiraHtmlAttachment[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((attachment) => {
+      const filename = (attachment.filename ?? "").toLowerCase();
+      const mimeType = (attachment.mimeType ?? "").toLowerCase();
+      return mimeType === "text/html" || filename.endsWith(".html") || filename.endsWith(".htm");
+    })
+    .map((attachment) => ({
+      filename: normalizeWhitespace(attachment.filename ?? "example.html"),
+      mimeType: attachment.mimeType ?? "text/html",
+      contentUrl: attachment.content ?? ""
     }))
     .filter((attachment) => Boolean(attachment.contentUrl));
 }

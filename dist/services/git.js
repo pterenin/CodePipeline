@@ -93,8 +93,6 @@ export class GitService {
         const mirrorGit = simpleGit(mirrorPath);
         await mirrorGit.fetch("origin", "--prune");
         await mirrorGit.fetch("origin", `+refs/heads/${this.config.GIT_BASE_BRANCH}:refs/remotes/origin/${this.config.GIT_BASE_BRANCH}`);
-        await mirrorGit.checkout(["-B", this.config.GIT_BASE_BRANCH, `origin/${this.config.GIT_BASE_BRANCH}`]);
-        await mirrorGit.reset(["--hard", `origin/${this.config.GIT_BASE_BRANCH}`]);
     }
     async resolveUniqueBranchName(mirrorPath, ticketKey, summary) {
         const baseBranchName = `ai/${ticketKey}-${slugify(summary)}`;

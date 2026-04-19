@@ -101,6 +101,8 @@ npm run dev
 - `CODEX_CLI_PATH`: Path to the `codex` executable. Defaults to `codex`.
 - `VALIDATION_REPAIR_ATTEMPTS`: Max number of automated repair attempts after validation failures. Defaults to `5`.
 
+The worker explicitly runs Codex CLI with `-c model_reasoning_effort="xhigh"` so ticket analysis, implementation, review, and repair passes do not depend on per-user Codex config.
+
 ## API
 
 ### `GET /health`
@@ -146,22 +148,24 @@ If a run is already active, the endpoint returns HTTP `409`.
 For each run, the service:
 
 1. Reads the next issue from Jira using either the configured full JQL or a generated project-based queue query.
-   Image attachments on the issue are downloaded into a git-ignored local folder and made available to Codex during the run.
+   Human Jira comments are included in full, and image or HTML example attachments on the issue are downloaded into a git-ignored local folder for the agent.
 2. Applies safety checks for missing requirements and hard-blocked keywords.
 3. Refreshes a persistent local mirror of the target repository and creates a fresh per-ticket git worktree.
 4. Creates a branch named `ai/JIRA-123-short-slug`.
-5. Launches Codex CLI inside the prepared git worktree so the agent can inspect the repository directly, edit files locally, and run focused commands before stopping.
-6. Runs validation commands in order:
+5. Launches a Codex context pass that analyzes the whole ticket, comments, and local Jira assets, then refreshes `docs/tickets/JIRA-123.md` before implementation begins.
+6. Launches a Codex implementation pass inside the prepared git worktree so the agent can inspect the repository directly, reuse existing components, avoid copying HTML example structure verbatim, edit files locally, and run focused commands before stopping.
+7. Launches a fresh Codex review pass that re-analyzes the ticket against the current implementation, refreshes `docs/tickets/JIRA-123.review.md`, and if needed sends findings back into one automated follow-up implementation pass before validation.
+8. Runs validation commands in order:
    - `npm ci`
    - `npm run lint`
    - `npm run typecheck`
    - `npm test -- --runInBand`
-7. If validation fails, performs up to the configured number of repair attempts with validation output.
-8. Commits and pushes the branch if files changed.
-9. Publishes the validated change:
+9. If validation fails, performs up to the configured number of repair attempts with validation output.
+10. Commits and pushes the branch if files changed.
+11. Publishes the validated change:
    - by default, pushes a ticket branch and creates a draft GitHub pull request
    - if `GIT_DIRECT_COMMITS=true` and `GIT_BASE_BRANCH` is not `main`, commits directly to `GIT_BASE_BRANCH`
-10. Comments back to Jira with the PR link or direct commit outcome, and labels successful tickets with `ai-done`.
+12. Comments back to Jira with the PR link or direct commit outcome, labels successful tickets with `ai-done`, and moves them to `In Review` when that transition is available.
 
 ## Frontend
 
@@ -181,7 +185,10 @@ The UI shows:
 The agent layer is intentionally modular. Today it:
 
 - runs Codex CLI directly inside the isolated ticket worktree
+- refreshes a per-ticket markdown context file under `docs/tickets/` before implementation
+- runs a fresh post-implementation review pass and stores structured findings in `docs/tickets/<ticket>.review.md`
 - lets the agent inspect the full repository with local tools instead of relying on a preloaded file bundle
+- includes full human Jira comment history plus downloaded Jira screenshots and HTML examples in the handoff
 - leaves edits in the working tree for the existing validation, git, GitHub, and Jira stages
 - performs repeated repair passes if validation fails, up to the configured limit
 

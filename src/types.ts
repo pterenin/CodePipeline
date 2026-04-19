@@ -4,7 +4,8 @@ export interface JiraTicket {
   description: string;
   acceptanceCriteria?: string;
   imageAttachments?: JiraImageAttachment[];
-  recentHumanComments?: string[];
+  htmlAttachments?: JiraHtmlAttachment[];
+  humanComments?: string[];
   url: string;
 }
 
@@ -13,6 +14,12 @@ export interface JiraImageAttachment {
   mimeType: string;
   contentUrl: string;
   thumbnailUrl?: string;
+}
+
+export interface JiraHtmlAttachment {
+  filename: string;
+  mimeType: string;
+  contentUrl: string;
 }
 
 export interface ValidationStepResult {
@@ -35,6 +42,15 @@ export interface AgentRunResult {
   summary: string;
   reason?: string;
   changedFiles: string[];
+}
+
+export interface ImplementationReviewResult {
+  decision: "approved" | "needs_follow_up" | "needs_human_review";
+  summary: string;
+  findings: string[];
+  reviewPath: string;
+  changedFiles: string[];
+  reason?: string;
 }
 
 export interface AgentFileEdit {
@@ -71,11 +87,13 @@ export interface WorkerRunResult {
 }
 
 export const WORKFLOW_STEP_DEFINITIONS = [
-  { id: "fetch_ticket", label: "Fetch Ticket" },
+  { id: "fetch_ticket", label: "Fetch Tickets" },
   { id: "evaluate_guardrails", label: "Guardrails" },
   { id: "comment_start", label: "Start Comment" },
   { id: "prepare_repository", label: "Prepare Repo" },
+  { id: "document_context", label: "Document Context" },
   { id: "implement_changes", label: "Implement" },
+  { id: "review_implementation", label: "Review" },
   { id: "validation", label: "Validate" },
   { id: "commit_push", label: "Commit & Push" },
   { id: "create_pull_request", label: "Create PR" },

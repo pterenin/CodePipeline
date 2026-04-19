@@ -13,11 +13,21 @@ export class AgentService {
         this.config = config;
     }
     async implementTicket(ticket, repoPath, hooks) {
-        hooks?.onProgress?.("Launching Codex CLI in the prepared worktree.");
+        hooks?.onProgress?.("Launching Codex CLI to implement the ticket from the documented context.");
         return this.runCodex({
             ticket,
             repoPath,
             mode: "implementation",
+            ...(hooks?.reviewFindingsPath ? { reviewFindingsPath: hooks.reviewFindingsPath } : {}),
+            ...(hooks ? { hooks } : {}),
+        });
+    }
+    async documentTicketContext(ticket, repoPath, hooks) {
+        hooks?.onProgress?.("Launching Codex CLI to analyze the ticket and refresh its markdown context file.");
+        return this.runCodex({
+            ticket,
+            repoPath,
+            mode: "context",
             ...(hooks ? { hooks } : {}),
         });
     }
@@ -30,12 +40,55 @@ export class AgentService {
             ...(signal ? { signal } : {}),
         });
     }
+    async reviewTicketImplementation(ticket, repoPath, hooks) {
+        const reviewPath = buildImplementationReviewPath(ticket.key);
+        hooks?.onProgress?.("Launching a fresh Codex review pass against the implemented ticket.");
+        const run = await this.runCodex({
+            ticket,
+            repoPath,
+            mode: "review",
+            ...(hooks ? { hooks } : {}),
+        });
+        if (run.decision === "needs_human_review") {
+            return {
+                decision: "needs_human_review",
+                summary: run.summary,
+                findings: [],
+                reviewPath,
+                changedFiles: run.changedFiles,
+                ...(run.reason ? { reason: run.reason } : {}),
+            };
+        }
+        const parsedReview = await readImplementationReview(repoPath, reviewPath);
+        if (!parsedReview) {
+            return {
+                decision: "needs_human_review",
+                summary: "Implementation review did not produce a parseable review document.",
+                findings: [],
+                reviewPath,
+                changedFiles: run.changedFiles,
+                reason: "Expected a structured review markdown file with a decision and findings.",
+            };
+        }
+        return {
+            decision: parsedReview.decision,
+            summary: parsedReview.summary,
+            findings: parsedReview.findings,
+            reviewPath,
+            changedFiles: run.changedFiles,
+        };
+    }
     async runCodex(input) {
         const signal = input.signal ?? input.hooks?.signal;
-        const jiraImagePaths = await this.prepareJiraImages(input.ticket, input.repoPath, signal);
+        const ticketContextPath = buildTicketContextPath(input.ticket.key);
+        const jiraAssets = await this.prepareJiraAssets(input.ticket, input.repoPath, signal);
         const prompt = buildCodexPrompt({
             ...input,
-            jiraImagePaths,
+            ticketContextPath,
+            jiraImagePaths: jiraAssets.imagePaths,
+            jiraHtmlExamplePaths: jiraAssets.htmlExamplePaths,
+            inlineHtmlExamples: extractInlineHtmlExamples(input.ticket),
+            ...(jiraAssets.manifestPath ? { jiraAssetManifestPath: jiraAssets.manifestPath } : {}),
         });
         const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-run-"));
         const outputPath = path.join(tempDir, "last-message.txt");
@@ -44,12 +97,16 @@ export class AgentService {
             repoPath: input.repoPath,
             model: this.config.OPENAI_MODEL,
         });
-        input.hooks?.onProgress?.("Codex is inspecting the repository and making changes.");
+        input.hooks?.onProgress?.(input.mode === "context"
+            ? "Codex is inspecting the ticket, comments, assets, and repository to refresh the ticket markdown."
+            : "Codex is inspecting the repository and making changes.");
         try {
             const result = await execa(this.config.CODEX_CLI_PATH, [
                 "-a",
                 "never",
                 "exec",
+                "-c",
+                'model_reasoning_effort="xhigh"',
                 "--sandbox",
                 "workspace-write",
                 "--output-last-message",
@@ -119,27 +176,20 @@ export class AgentService {
             await fs.rm(tempDir, { recursive: true, force: true });
         }
     }
-    async prepareJiraImages(ticket, repoPath, signal) {
-        if (!ticket.imageAttachments?.length) {
-            return [];
+    async prepareJiraAssets(ticket, repoPath, signal) {
+        const imageAttachments = ticket.imageAttachments ?? [];
+        const htmlAttachments = ticket.htmlAttachments ?? [];
+        if (imageAttachments.length === 0 && htmlAttachments.length === 0) {
+            return { imagePaths: [], htmlExamplePaths: [] };
         }
         const imageRoot = path.join(repoPath, ".jira-assets", ticket.key);
         await fs.mkdir(imageRoot, { recursive: true });
         await ensureGitExclude(repoPath, ".jira-assets/");
-        const localPaths = await Promise.all(ticket.imageAttachments.map(async (attachment, index) => {
+        const imagePaths = (await Promise.all(imageAttachments.map(async (attachment, index) => {
             const sanitizedName = sanitizeFilename(attachment.filename, index);
             const targetPath = path.join(imageRoot, sanitizedName);
             try {
-                const response = await axios.get(attachment.contentUrl, {
-                    responseType: "arraybuffer",
-                    ...(signal ? { signal } : {}),
-                    auth: {
-                        username: this.config.JIRA_EMAIL,
-                        password: this.config.JIRA_API_TOKEN,
-                    },
-                    timeout: 30000,
-                });
-                await fs.writeFile(targetPath, Buffer.from(new Uint8Array(response.data)));
+                await this.downloadJiraAttachment(attachment.contentUrl, targetPath, signal);
                 return targetPath;
             }
             catch (error) {
@@ -151,8 +201,60 @@ export class AgentService {
                 });
                 return "";
             }
-        }));
-        return localPaths.filter(Boolean);
+        }))).filter(Boolean);
+        const htmlExamplePaths = (await Promise.all(htmlAttachments.map(async (attachment, index) => {
+            const sanitizedName = sanitizeFilename(attachment.filename, imageAttachments.length + index);
+            const targetPath = path.join(imageRoot, sanitizedName);
+            try {
+                await this.downloadJiraAttachment(attachment.contentUrl, targetPath, signal);
+                return targetPath;
+            }
+            catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                this.logger.warn("Failed to download Jira HTML attachment", {
+                    ticketKey: ticket.key,
+                    filename: attachment.filename,
+                    message,
+                });
+                return "";
+            }
+        }))).filter(Boolean);
+        const manifestPath = path.join(imageRoot, "README.txt");
+        const manifestBody = [
+            `Jira assets for ${ticket.key}`,
+            "",
+            "These files were downloaded from Jira attachments so the implementation agent can inspect screenshots and HTML examples locally.",
+            "Open image files directly when visual context matters. Open HTML files directly when the ticket includes example markup.",
+            "",
+            "Image attachments:",
+            ...(imagePaths.length > 0 ? imagePaths.map((filePath, index) => `${index + 1}. ${filePath}`) : ["(none)"]),
+            "",
+            "HTML example attachments:",
+            ...(htmlExamplePaths.length > 0
+                ? htmlExamplePaths.map((filePath, index) => `${index + 1}. ${filePath}`)
+                : ["(none)"]),
+        ].join("\n");
+        await fs.writeFile(manifestPath, manifestBody, "utf8");
+        return {
+            imagePaths,
+            htmlExamplePaths,
+            manifestPath,
+        };
+    }
+    async downloadJiraAttachment(contentUrl, targetPath, signal) {
+        if (await fileExists(targetPath)) {
+            return;
+        }
+        const response = await axios.get(contentUrl, {
+            responseType: "arraybuffer",
+            ...(signal ? { signal } : {}),
+            auth: {
+                username: this.config.JIRA_EMAIL,
+                password: this.config.JIRA_API_TOKEN,
+            },
+            timeout: 30000,
+        });
+        await fs.writeFile(targetPath, Buffer.from(new Uint8Array(response.data)));
     }
 }
 function buildCodexPrompt(input) {
@@ -169,6 +271,60 @@ function buildCodexPrompt(input) {
             ].join("\n")),
         ].join("\n\n")
         : "";
+    const modeInstructions = input.mode === "context"
+        ? [
+            "Your first task is to inspect the repository and create or refresh the ticket context markdown before any implementation work.",
+            `Refresh this exact file: ${input.ticketContextPath}`,
+            "The markdown must capture the full ticket context: summary, description, acceptance criteria, all human comments, image and HTML example assets, files/components inspected, reusable components to reuse, smaller reusable components to create if needed, separation-of-concerns/readability notes, and a concrete implementation plan.",
+            "If the ticket includes an HTML example inline or as a downloaded HTML file, search the repository for the matching surface or example and record whether it already exists.",
+            "In this mode, only update documentation under docs/. Do not implement product code yet.",
+            "End with a short plain-text summary that mentions the ticket context markdown path you refreshed.",
+        ]
+        : input.mode === "implementation"
+            ? [
+                "Read the ticket context markdown first and use it as your working memory before you implement anything.",
+                `Ticket context markdown path: ${input.ticketContextPath}`,
+                "Analyze the whole ticket, all human comments, and any local Jira assets before deciding what to edit.",
+                "If the ticket includes an HTML example inline or as a downloaded HTML attachment, check whether that example already exists in the repository.",
+                "When aligning UI to an HTML example, do not copy the example's exact HTML structure. Reuse existing component composition, update styles and UI behavior accordingly, and extract smaller reusable components when that improves reuse, readability, or separation of concerns.",
+                "Prefer existing reusable components before creating new ones. If new pieces are needed, keep them small, composable, and aligned with best React practices.",
+                ...(input.reviewFindingsPath
+                    ? [
+                        `Before editing, read and address the post-implementation review findings in: ${input.reviewFindingsPath}`,
+                        "Treat every finding in that review document as required follow-up work unless you can clearly justify why it should not change the code.",
+                    ]
+                    : []),
+            ]
+            : input.mode === "review"
+                ? [
+                    "You are a fresh reviewer for the already-implemented ticket. Re-analyze the ticket, comments, context markdown, local Jira assets, and current repository changes from scratch.",
+                    `Read the ticket context markdown first: ${input.ticketContextPath}`,
+                    `Refresh this exact review file: ${buildImplementationReviewPath(input.ticket.key)}`,
+                    "In review mode, only update the review markdown under docs/. Do not implement product code.",
+                    "Review whether the current implementation fully addresses the ticket, comments, UI expectations, and any HTML example guidance.",
+                    "If the ticket includes an HTML example, confirm that the implementation matched the intent without copying the exact example HTML structure.",
+                    "Look specifically for missed requirements, weak reuse, poor separation of concerns, readability issues, and places where an existing component should have been reused.",
+                    "Use this exact review file structure:",
+                    "# Implementation Review",
+                    "",
+                    "Decision: approved | needs_follow_up",
+                    "Summary: one sentence",
+                    "",
+                    "Findings:",
+                    "- finding 1",
+                    "- finding 2",
+                    "",
+                    "Use `- None.` when there are no findings.",
+                    "Only include findings that are actionable and grounded in the ticket or current implementation.",
+                ]
+                : [
+                    "Re-read the ticket context markdown before repairing validation failures.",
+                    `Ticket context markdown path: ${input.ticketContextPath}`,
+                    "Keep the implementation aligned with the documented plan, reusable component strategy, and any HTML example constraints.",
+                    ...(input.reviewFindingsPath
+                        ? [`Also read the post-implementation review findings in: ${input.reviewFindingsPath}`]
+                        : []),
+                ];
     return [
         "You are Codex working inside a git worktree created for a single Jira ticket.",
         "Inspect the repository directly before editing anything.",
@@ -176,6 +332,7 @@ function buildCodexPrompt(input) {
         "Make the smallest complete code change that satisfies the ticket and acceptance criteria.",
         "Prefer fixing the actual user-facing surface mentioned in the ticket instead of nearby or similarly named screens.",
         "If there are multiple plausible surfaces, inspect all relevant callers/components before choosing.",
+        ...modeInstructions,
         "Do not commit, push, or open pull requests.",
         "Leave all changes in the working tree.",
         "End with a short plain-text summary of what you changed and any remaining risk.",
@@ -186,10 +343,15 @@ function buildCodexPrompt(input) {
         `Ticket summary: ${input.ticket.summary}`,
         `Ticket description:\n${input.ticket.description || "(empty)"}`,
         `Acceptance criteria:\n${input.ticket.acceptanceCriteria ?? "(not explicitly provided)"}`,
+        `Jira asset manifest:\n${input.jiraAssetManifestPath ?? "(none)"}`,
         `Jira image attachments saved locally:\n${input.jiraImagePaths.join("\n") || "(none)"}`,
-        `Recent human Jira comments:\n${input.ticket.recentHumanComments?.join("\n\n---\n\n") ?? "(none)"}`,
+        `Jira HTML example attachments saved locally:\n${input.jiraHtmlExamplePaths.join("\n") || "(none)"}`,
+        `Possible inline HTML examples from the ticket/comments:\n${input.inlineHtmlExamples.join("\n\n---\n\n") || "(none detected)"}`,
+        `Human Jira comments:\n${input.ticket.humanComments?.join("\n\n---\n\n") ?? "(none)"}`,
+        `Post-implementation review findings path:\n${input.reviewFindingsPath ?? "(none)"}`,
         validationSummary,
         "",
+        "If Jira screenshots or HTML example files are provided, inspect the local files or manifest before editing the UI they describe.",
         "Before you finish:",
         "1. Verify the ticketed surface was actually edited or intentionally justified.",
         "2. Run focused checks when feasible.",
@@ -221,6 +383,12 @@ async function ensureGitExclude(repoPath, entry) {
         : `${entry}\n`;
     await fs.mkdir(path.dirname(excludePath), { recursive: true });
     await fs.writeFile(excludePath, next, "utf8");
+}
+function buildTicketContextPath(ticketKey) {
+    return path.posix.join("docs", "tickets", `${ticketKey}.md`);
+}
+function buildImplementationReviewPath(ticketKey) {
+    return path.posix.join("docs", "tickets", `${ticketKey}.review.md`);
 }
 function sanitizeFilename(filename, index) {
     const ext = path.extname(filename).slice(0, 10) || ".img";
@@ -255,4 +423,60 @@ async function listChangedFiles(repoPath) {
         .filter(Boolean)
         .map((line) => line.slice(3).trim())
         .filter(Boolean);
+}
+function extractInlineHtmlExamples(ticket) {
+    const sources = [ticket.description, ...(ticket.humanComments ?? [])];
+    const snippets = [];
+    for (const source of sources) {
+        for (const block of source.split(/\n{2,}/)) {
+            const normalizedBlock = block.trim();
+            if (!normalizedBlock || !/<\/?[a-z][^>]*>/i.test(normalizedBlock)) {
+                continue;
+            }
+            snippets.push(truncate(normalizedBlock, 500));
+            if (snippets.length >= 5) {
+                return Array.from(new Set(snippets));
+            }
+        }
+    }
+    return Array.from(new Set(snippets));
+}
+async function fileExists(targetPath) {
+    try {
+        await fs.access(targetPath);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+async function readImplementationReview(repoPath, reviewPath) {
+    const fullPath = path.join(repoPath, reviewPath);
+    if (!(await fileExists(fullPath))) {
+        return null;
+    }
+    const content = await fs.readFile(fullPath, "utf8");
+    const decisionMatch = content.match(/^Decision:\s*(approved|needs_follow_up)\s*$/im);
+    const summaryMatch = content.match(/^Summary:\s*(.+)\s*$/im);
+    const findingsSectionMatch = content.match(/^Findings:\s*([\s\S]*)$/im);
+    if (!decisionMatch || !summaryMatch || !findingsSectionMatch) {
+        return null;
+    }
+    const decision = decisionMatch[1];
+    const summary = summaryMatch[1];
+    const findingsSection = findingsSectionMatch[1];
+    if (!decision || !summary || !findingsSection) {
+        return null;
+    }
+    const findings = findingsSection
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.startsWith("- "))
+        .map((line) => line.slice(2).trim())
+        .filter((line) => line.length > 0 && line.toLowerCase() !== "none.");
+    return {
+        decision: decision,
+        summary: summary.trim(),
+        findings,
+    };
 }

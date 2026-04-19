@@ -45,7 +45,8 @@ export class JiraService {
             const description = normalizeWhitespace(extractPlainText(issue.fields.description));
             const acceptanceCriteria = extractAcceptanceCriteria(description);
             const imageAttachments = extractImageAttachments(issue.fields.attachment);
-            const recentHumanComments = await this.getRecentHumanComments(issue.key);
+            const humanComments = await this.getHumanComments(issue.key);
+            const htmlAttachments = extractHtmlAttachments(issue.fields.attachment);
             const ticket = {
                 key: issue.key,
                 summary: normalizeWhitespace(issue.fields.summary ?? "(no summary)"),
@@ -58,8 +59,11 @@ export class JiraService {
             if (imageAttachments.length > 0) {
                 ticket.imageAttachments = imageAttachments;
             }
-            if (recentHumanComments.length > 0) {
-                ticket.recentHumanComments = recentHumanComments;
+            if (htmlAttachments.length > 0) {
+                ticket.htmlAttachments = htmlAttachments;
+            }
+            if (humanComments.length > 0) {
+                ticket.humanComments = humanComments;
             }
             return ticket;
         }));
@@ -87,36 +91,27 @@ export class JiraService {
             }
         });
     }
-    async transitionToDone(ticketKey) {
-        this.logger.info(`Attempting Jira done transition for ${ticketKey}`);
+    async transitionToInReview(ticketKey) {
+        this.logger.info(`Attempting Jira In Review transition for ${ticketKey}`);
         const response = await this.client.get(`/rest/api/3/issue/${ticketKey}/transitions`);
-        const doneTransition = response.data.transitions.find((transition) => {
+        const reviewTransition = response.data.transitions.find((transition) => {
             const transitionName = transition.name.toLowerCase();
             const targetName = transition.to?.name?.toLowerCase() ?? "";
-            const categoryKey = transition.to?.statusCategory?.key?.toLowerCase() ?? "";
-            const categoryName = transition.to?.statusCategory?.name?.toLowerCase() ?? "";
-            return (categoryKey === "done" ||
-                categoryName === "done" ||
-                transitionName === "done" ||
-                transitionName === "closed" ||
-                transitionName === "resolve issue" ||
-                targetName === "done" ||
-                targetName === "closed" ||
-                targetName === "resolved");
+            return transitionName === "in review" || targetName === "in review";
         });
-        if (!doneTransition) {
-            this.logger.warn(`No done-like Jira transition available for ${ticketKey}`);
+        if (!reviewTransition) {
+            this.logger.warn(`No In Review Jira transition available for ${ticketKey}`);
             return false;
         }
         await this.client.post(`/rest/api/3/issue/${ticketKey}/transitions`, {
             transition: {
-                id: doneTransition.id
+                id: reviewTransition.id
             }
         });
         return true;
     }
-    async getRecentHumanComments(ticketKey) {
-        this.logger.info(`Fetching recent Jira comments for ${ticketKey}`);
+    async getHumanComments(ticketKey) {
+        this.logger.info(`Fetching Jira comments for ${ticketKey}`);
         const response = await this.client.get(`/rest/api/3/issue/${ticketKey}/comment`, {
             params: {
                 maxResults: 50
@@ -125,8 +120,7 @@ export class JiraService {
         return response.data.comments
             .map((comment) => normalizeWhitespace(extractPlainText(comment.body)))
             .filter(Boolean)
-            .filter((comment) => !comment.startsWith("AI Agent:"))
-            .slice(-5);
+            .filter((comment) => !comment.startsWith("AI Agent:"));
     }
 }
 function prefixAiAgentComment(body) {
@@ -159,17 +153,45 @@ function toAdfDocument(text) {
     };
 }
 function buildJiraQuery(config) {
+    const explicitIncludeClause = buildExplicitIncludeClause(config.jiraForceIncludeKeys);
     if (config.JIRA_JQL) {
-        return `(${config.JIRA_JQL}) AND (labels is EMPTY OR labels not in (ai-done))`;
+        const { query, orderBy } = splitJqlOrderBy(config.JIRA_JQL);
+        const baseQuery = combineQueueClauses([query, explicitIncludeClause]);
+        return `${baseQuery} AND (labels is EMPTY OR labels not in (ai-done))${orderBy ? ` ${orderBy}` : ""}`;
     }
-    const parts = [`project = ${config.JIRA_PROJECT_KEY}`, `(labels is EMPTY OR labels not in (ai-done))`];
+    const parts = [`project = ${config.JIRA_PROJECT_KEY}`];
     if (config.JIRA_QUEUE_LABEL) {
         parts.push(`labels = ${quoteJqlValueIfNeeded(config.JIRA_QUEUE_LABEL)}`);
     }
     if (config.JIRA_QUEUE_STATUS) {
         parts.push(`status = ${quoteJqlValueIfNeeded(config.JIRA_QUEUE_STATUS)}`);
     }
-    return `${parts.join(" AND ")} ORDER BY priority DESC, created ASC`;
+    return `${combineQueueClauses([parts.join(" AND "), explicitIncludeClause])} AND (labels is EMPTY OR labels not in (ai-done)) ORDER BY priority DESC, created ASC`;
+}
+function combineQueueClauses(clauses) {
+    const populated = clauses.filter(Boolean);
+    if (populated.length === 0) {
+        return "";
+    }
+    if (populated.length === 1) {
+        return `(${populated[0]})`;
+    }
+    return `(${populated.map((clause) => `(${clause})`).join(" OR ")})`;
+}
+function buildExplicitIncludeClause(keys) {
+    if (keys.length === 0) {
+        return undefined;
+    }
+    return `key in (${keys.map((key) => quoteJqlValueIfNeeded(key)).join(", ")})`;
+}
+function splitJqlOrderBy(jql) {
+    const match = jql.match(/^(.*?)(\s+ORDER\s+BY\s+[\s\S]+)$/i);
+    if (!match) {
+        return { query: jql.trim() };
+    }
+    const query = match[1]?.trim() ?? jql.trim();
+    const orderBy = match[2]?.trim();
+    return orderBy ? { query, orderBy } : { query };
 }
 function quoteJqlValueIfNeeded(value) {
     return /\s/.test(value) ? `"${value}"` : value;
@@ -207,6 +229,23 @@ function extractImageAttachments(value) {
         mimeType: attachment.mimeType ?? "application/octet-stream",
         contentUrl: attachment.content ?? "",
         ...(attachment.thumbnail ? { thumbnailUrl: attachment.thumbnail } : {})
+    }))
+        .filter((attachment) => Boolean(attachment.contentUrl));
+}
+function extractHtmlAttachments(value) {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+    return value
+        .filter((attachment) => {
+        const filename = (attachment.filename ?? "").toLowerCase();
+        const mimeType = (attachment.mimeType ?? "").toLowerCase();
+        return mimeType === "text/html" || filename.endsWith(".html") || filename.endsWith(".htm");
+    })
+        .map((attachment) => ({
+        filename: normalizeWhitespace(attachment.filename ?? "example.html"),
+        mimeType: attachment.mimeType ?? "text/html",
+        contentUrl: attachment.content ?? ""
     }))
         .filter((attachment) => Boolean(attachment.contentUrl));
 }

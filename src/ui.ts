@@ -261,42 +261,148 @@ export function renderAppHtml(): string {
       }
 
       .pipeline-wrap {
-        position: relative;
         margin-top: 22px;
-        padding: 12px 6px 8px;
-      }
-
-      .pipeline-svg {
-        position: absolute;
-        inset: 0;
-        width: 100%;
-        height: 100%;
-        pointer-events: none;
-        overflow: visible;
-      }
-
-      .pipeline-grid {
-        position: relative;
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 18px;
       }
 
-      .pipeline-node {
-        position: relative;
-        min-height: 198px;
+      .pipeline-lane {
         padding: 18px;
-        border-radius: 24px;
-        border: 1px solid rgba(232, 236, 255, 0.22);
+        border-radius: 26px;
+        border: 1px solid rgba(232, 236, 255, 0.14);
         background:
-          linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.05) 100%),
-          rgba(42, 36, 62, 0.94);
-        box-shadow:
-          inset 0 1px 0 rgba(255, 255, 255, 0.12),
-          0 18px 36px rgba(8, 7, 20, 0.2);
+          linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.025)),
+          rgba(24, 20, 40, 0.82);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
       }
 
-      .pipeline-node.active {
+      .pipeline-lane-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 14px;
+        margin-bottom: 16px;
+      }
+
+      .pipeline-lane-title {
+        margin: 0;
+        font-size: 1rem;
+        letter-spacing: -0.02em;
+      }
+
+      .pipeline-lane-copy {
+        margin: 6px 0 0;
+        max-width: 720px;
+        color: var(--subtle);
+        line-height: 1.6;
+        font-size: 0.9rem;
+      }
+
+      .pipeline-lane-chip {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 7px 12px;
+        border-radius: 999px;
+        border: 1px solid rgba(232, 236, 255, 0.18);
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--muted);
+        font-size: 0.74rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+
+      .pipeline-row {
+        display: flex;
+        align-items: stretch;
+        gap: 12px;
+        overflow-x: auto;
+        padding: 4px 2px 6px;
+        scroll-snap-type: x proximity;
+      }
+
+      .pipeline-row::-webkit-scrollbar {
+        height: 10px;
+      }
+
+      .pipeline-row::-webkit-scrollbar-thumb {
+        border-radius: 999px;
+        background: rgba(215, 219, 239, 0.18);
+      }
+
+      .pipeline-edge {
+        position: relative;
+        flex: 0 0 42px;
+        align-self: center;
+        height: 18px;
+      }
+
+      .pipeline-edge::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 8px;
+        top: 50%;
+        height: 2px;
+        transform: translateY(-50%);
+        background: rgba(232, 236, 255, 0.22);
+      }
+
+      .pipeline-edge::after {
+        content: "";
+        position: absolute;
+        right: 0;
+        top: 50%;
+        width: 10px;
+        height: 10px;
+        transform: translateY(-50%) rotate(45deg);
+        border-top: 2px solid rgba(232, 236, 255, 0.32);
+        border-right: 2px solid rgba(232, 236, 255, 0.32);
+      }
+
+      .pipeline-edge.running::before {
+        background: linear-gradient(90deg, rgba(122, 184, 255, 0.24), rgba(122, 184, 255, 0.88));
+      }
+
+      .pipeline-edge.completed::before {
+        background: linear-gradient(90deg, rgba(98, 217, 139, 0.22), rgba(98, 217, 139, 0.74));
+      }
+
+      .pipeline-edge.failed::before {
+        background: linear-gradient(90deg, rgba(255, 127, 139, 0.2), rgba(255, 127, 139, 0.8));
+      }
+
+      .pipeline-edge.skipped::before {
+        background: linear-gradient(90deg, rgba(255, 209, 102, 0.18), rgba(255, 209, 102, 0.74));
+      }
+
+      .pipeline-card {
+        position: relative;
+        flex: 0 0 292px;
+        min-height: 208px;
+        padding: 18px;
+        border-radius: 24px;
+        border: 1px solid rgba(232, 236, 255, 0.18);
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.11) 0%, rgba(255, 255, 255, 0.04) 100%),
+          rgba(37, 31, 56, 0.96);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.1),
+          0 14px 28px rgba(8, 7, 20, 0.2);
+        scroll-snap-align: start;
+      }
+
+      .pipeline-card::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        background: linear-gradient(135deg, rgba(122, 184, 255, 0.12), transparent 34%, transparent 100%);
+        pointer-events: none;
+      }
+
+      .pipeline-card.active {
         border-color: rgba(122, 184, 255, 0.62);
         box-shadow:
           0 0 0 1px rgba(122, 184, 255, 0.28),
@@ -304,15 +410,15 @@ export function renderAppHtml(): string {
           0 24px 46px rgba(12, 10, 28, 0.34);
       }
 
-      .pipeline-node.completed {
+      .pipeline-card.completed {
         border-color: rgba(98, 217, 139, 0.52);
       }
 
-      .pipeline-node.failed {
+      .pipeline-card.failed {
         border-color: rgba(255, 127, 139, 0.58);
       }
 
-      .pipeline-node.skipped {
+      .pipeline-card.skipped {
         border-color: rgba(255, 209, 102, 0.52);
       }
 
@@ -338,6 +444,22 @@ export function renderAppHtml(): string {
         text-transform: uppercase;
       }
 
+      .node-badge.global {
+        border-color: rgba(122, 184, 255, 0.26);
+        background: rgba(122, 184, 255, 0.12);
+        color: #d7ebff;
+      }
+
+      .node-badge.ticket {
+        border-color: rgba(255, 255, 255, 0.14);
+      }
+
+      .node-badge.publish {
+        border-color: rgba(98, 217, 139, 0.22);
+        background: rgba(98, 217, 139, 0.1);
+        color: #d2ffe1;
+      }
+
       .node-status {
         display: inline-flex;
         align-items: center;
@@ -351,6 +473,14 @@ export function renderAppHtml(): string {
         margin: 0;
         font-size: 1.05rem;
         letter-spacing: -0.02em;
+      }
+
+      .node-phase {
+        margin: 10px 0 0;
+        color: #cfd7ff;
+        font-size: 0.8rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
       }
 
       .node-detail {
@@ -673,8 +803,9 @@ export function renderAppHtml(): string {
       }
 
       @media (max-width: 960px) {
-        .pipeline-grid {
-          grid-template-columns: repeat(2, minmax(0, 1fr));
+        .pipeline-lane-header {
+          flex-direction: column;
+          align-items: flex-start;
         }
       }
 
@@ -689,8 +820,13 @@ export function renderAppHtml(): string {
           border-radius: 22px;
         }
 
-        .pipeline-grid {
-          grid-template-columns: 1fr;
+        .pipeline-lane {
+          padding: 16px;
+          border-radius: 22px;
+        }
+
+        .pipeline-card {
+          flex-basis: min(86vw, 292px);
         }
 
         .node-topline,
@@ -709,9 +845,104 @@ export function renderAppHtml(): string {
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script type="text/babel">
-      const { useEffect, useLayoutEffect, useMemo, useRef, useState } = React;
+      const { useEffect, useMemo, useState } = React;
       const SNAPSHOT_STORAGE_KEY = "codepipeline:lastSnapshot";
       const CONNECTION_STORAGE_KEY = "codepipeline:lastSyncAt";
+      const PIPELINE_LANES = [
+        {
+          id: "queue",
+          title: "Queue Bootstrap",
+          copy: "This stage runs once per queue execution to discover the Jira worklist before any ticket-specific processing begins.",
+          chip: "Runs once",
+          stepIds: ["fetch_ticket"]
+        },
+        {
+          id: "ticket",
+          title: "Per-Ticket Flow",
+          copy: "These stages repeat for each ticket in the loaded queue. The active ticket moves through them left to right like a job pipeline.",
+          chip: "Repeats per ticket",
+          stepIds: [
+            "evaluate_guardrails",
+            "comment_start",
+            "prepare_repository",
+            "document_context",
+            "implement_changes",
+            "review_implementation",
+            "validation",
+            "commit_push",
+            "create_pull_request",
+            "finalize_jira"
+          ]
+        }
+      ];
+      const STEP_META = {
+        fetch_ticket: {
+          lane: "queue",
+          badge: "global",
+          phase: "Queue setup",
+          helper: "Loads all matching Jira tickets for the current run."
+        },
+        evaluate_guardrails: {
+          lane: "ticket",
+          badge: "ticket",
+          phase: "Ticket intake",
+          helper: "Checks whether the current ticket is safe and specific enough to automate."
+        },
+        comment_start: {
+          lane: "ticket",
+          badge: "ticket",
+          phase: "Ticket intake",
+          helper: "Reserved for early Jira commenting when the workflow needs it."
+        },
+        prepare_repository: {
+          lane: "ticket",
+          badge: "ticket",
+          phase: "Workspace",
+          helper: "Creates the isolated git worktree and branch for the active ticket."
+        },
+        document_context: {
+          lane: "ticket",
+          badge: "ticket",
+          phase: "Analysis",
+          helper: "Builds the ticket context markdown so implementation keeps the full Jira history in view."
+        },
+        implement_changes: {
+          lane: "ticket",
+          badge: "ticket",
+          phase: "Implementation",
+          helper: "Applies the first coding pass from the documented ticket context."
+        },
+        review_implementation: {
+          lane: "ticket",
+          badge: "ticket",
+          phase: "Review",
+          helper: "Runs the fresh implementation review pass and feeds findings back into follow-up work if needed."
+        },
+        validation: {
+          lane: "ticket",
+          badge: "ticket",
+          phase: "Quality",
+          helper: "Runs validation commands and any repair loop required to get the branch green."
+        },
+        commit_push: {
+          lane: "ticket",
+          badge: "publish",
+          phase: "Publish",
+          helper: "Commits validated changes and pushes the branch or base target."
+        },
+        create_pull_request: {
+          lane: "ticket",
+          badge: "publish",
+          phase: "Publish",
+          helper: "Opens the draft pull request when the workflow is using PR mode."
+        },
+        finalize_jira: {
+          lane: "ticket",
+          badge: "publish",
+          phase: "Publish",
+          helper: "Writes the final Jira update, labels the ticket, and moves it forward when possible."
+        }
+      };
 
       function prettyStatus(value) {
         return value.replace(/_/g, " ").replace(/\\b\\w/g, function (match) {
@@ -731,24 +962,33 @@ export function renderAppHtml(): string {
         }).format(date);
       }
 
-      function toneForConnection(current, next) {
+      function toneForEdge(current, next) {
         if (current === "failed" || next === "failed") {
-          return "#ff8f9b";
+          return "failed";
         }
 
         if (current === "running" || next === "running") {
-          return "#9ad0ff";
+          return "running";
         }
 
         if (current === "completed" && next === "completed") {
-          return "#7be6a3";
+          return "completed";
         }
 
         if (current === "skipped" || next === "skipped") {
-          return "#ffd978";
+          return "skipped";
         }
 
-        return "rgba(232, 236, 255, 0.4)";
+        return "idle";
+      }
+
+      function getStepMeta(stepId) {
+        return STEP_META[stepId] || {
+          lane: "ticket",
+          badge: "ticket",
+          phase: "Pipeline",
+          helper: "Waiting for this stage to begin."
+        };
       }
 
       function buildSummaryFields(snapshot) {
@@ -1037,7 +1277,7 @@ export function renderAppHtml(): string {
               <article className="panel pipeline-panel">
                 <h2 className="panel-title">Pipeline Graph</h2>
                 <p className="panel-copy">
-                  Every stage is rendered as a connected node so the execution path stays visually clear while details and outputs stream in.
+                  Queue bootstrap runs once, then each ticket moves through the same execution lane. The graph keeps that distinction visible while details and outputs stream in.
                 </p>
                 <PipelineCanvas steps={snapshot.steps} />
               </article>
@@ -1087,148 +1327,87 @@ export function renderAppHtml(): string {
       }
 
       function PipelineCanvas(props) {
-        const containerRef = useRef(null);
-        const nodeRefs = useRef({});
-        const [lines, setLines] = useState([]);
-
-        useLayoutEffect(function () {
-          function recalculate() {
-            const container = containerRef.current;
-            if (!container || !props.steps.length) {
-              setLines([]);
-              return;
-            }
-
-            const containerRect = container.getBoundingClientRect();
-            const nextLines = [];
-
-            for (let index = 0; index < props.steps.length - 1; index += 1) {
-              const current = nodeRefs.current[props.steps[index].id];
-              const next = nodeRefs.current[props.steps[index + 1].id];
-
-              if (!current || !next) {
-                continue;
-              }
-
-              const startRect = current.getBoundingClientRect();
-              const endRect = next.getBoundingClientRect();
-
-              const startX = startRect.left - containerRect.left + startRect.width / 2;
-              const startY = startRect.top - containerRect.top + startRect.height / 2;
-              const endX = endRect.left - containerRect.left + endRect.width / 2;
-              const endY = endRect.top - containerRect.top + endRect.height / 2;
-              const curveOffset = Math.max(Math.abs(endX - startX) * 0.35, 40);
-
-              nextLines.push({
-                key: props.steps[index].id + "-" + props.steps[index + 1].id,
-                color: toneForConnection(props.steps[index].status, props.steps[index + 1].status),
-                active: props.steps[index].status === "running" || props.steps[index + 1].status === "running",
-                path:
-                  "M " +
-                  startX +
-                  " " +
-                  startY +
-                  " C " +
-                  (startX + curveOffset) +
-                  " " +
-                  startY +
-                  ", " +
-                  (endX - curveOffset) +
-                  " " +
-                  endY +
-                  ", " +
-                  endX +
-                  " " +
-                  endY
-              });
-            }
-
-            setLines(nextLines);
-          }
-
-          recalculate();
-          window.addEventListener("resize", recalculate);
-
-          let observer = null;
-          if (typeof ResizeObserver !== "undefined" && containerRef.current) {
-            observer = new ResizeObserver(recalculate);
-            observer.observe(containerRef.current);
-          }
-
-          return function () {
-            window.removeEventListener("resize", recalculate);
-            if (observer) {
-              observer.disconnect();
-            }
+        const lanes = PIPELINE_LANES.map(function (lane) {
+          return {
+            ...lane,
+            steps: lane.stepIds
+              .map(function (stepId) {
+                return props.steps.find(function (step) {
+                  return step.id === stepId;
+                });
+              })
+              .filter(Boolean)
           };
-        }, [props.steps]);
+        }).filter(function (lane) {
+          return lane.steps.length > 0;
+        });
 
         return (
-          <div className="pipeline-wrap" ref={containerRef}>
-            <svg className="pipeline-svg" aria-hidden="true">
-              {lines.map(function (line) {
-                return (
-                  <g key={line.key}>
-                    <path d={line.path} fill="none" stroke="rgba(244, 246, 255, 0.22)" strokeWidth="8" strokeLinecap="round" />
-                    <path
-                      d={line.path}
-                      fill="none"
-                      stroke={line.color}
-                      strokeOpacity={line.active ? 0.98 : 0.74}
-                      strokeWidth={line.active ? "3.8" : "2.8"}
-                      strokeLinecap="round"
-                      strokeDasharray={line.active ? "10 8" : "0"}
-                    />
-                  </g>
-                );
-              })}
-            </svg>
-
-            <div className="pipeline-grid">
-              {props.steps.map(function (step, index) {
-                return (
-                  <article
-                    key={step.id}
-                    ref={function (element) {
-                      nodeRefs.current[step.id] = element;
-                    }}
-                    className={
-                      "pipeline-node " +
-                      step.status +
-                      (step.status === "running" ? " active" : "")
-                    }
-                  >
-                    <div className="node-topline">
-                      <div className="node-badge">Node {String(index + 1).padStart(2, "0")}</div>
-                      <div className="node-status">
-                        <span className={"indicator " + step.status}></span>
-                        <span>{prettyStatus(step.status)}</span>
-                      </div>
+          <div className="pipeline-wrap">
+            {lanes.map(function (lane) {
+              return (
+                <section className="pipeline-lane" key={lane.id}>
+                  <div className="pipeline-lane-header">
+                    <div>
+                      <h3 className="pipeline-lane-title">{lane.title}</h3>
+                      <p className="pipeline-lane-copy">{lane.copy}</p>
                     </div>
+                    <div className="pipeline-lane-chip">{lane.chip}</div>
+                  </div>
 
-                    <h3 className="node-title">{step.label}</h3>
-                    <p className="node-detail">
-                      {step.detail || "Waiting for this stage to begin."}
-                    </p>
+                  <div className="pipeline-row">
+                    {lane.steps.map(function (step, index) {
+                      const meta = getStepMeta(step.id);
+                      return (
+                        <React.Fragment key={step.id}>
+                          <article
+                            className={
+                              "pipeline-card " +
+                              step.status +
+                              (step.status === "running" ? " active" : "")
+                            }
+                          >
+                            <div className="node-topline">
+                              <div className={"node-badge " + meta.badge}>
+                                {meta.phase} · {String(index + 1).padStart(2, "0")}
+                              </div>
+                              <div className="node-status">
+                                <span className={"indicator " + step.status}></span>
+                                <span>{prettyStatus(step.status)}</span>
+                              </div>
+                            </div>
 
-                    <div className="node-times">
-                      {step.startedAt ? <span className="time-pill">Started {formatTime(step.startedAt)}</span> : null}
-                      {step.finishedAt ? <span className="time-pill">Finished {formatTime(step.finishedAt)}</span> : null}
-                      {step.currentCommand ? <span className="command-pill">{step.currentCommand}</span> : null}
-                      {step.output.length ? <span className="output-pill">{step.output.length} updates</span> : null}
-                    </div>
+                            <h3 className="node-title">{step.label}</h3>
+                            <p className="node-phase">{meta.lane === "queue" ? "Queue-wide stage" : "Repeats for each ticket"}</p>
+                            <p className="node-detail">
+                              {step.detail || meta.helper}
+                            </p>
 
-                    {step.output.length ? (
-                      <ul className="node-output">
-                        {step.output.slice(0, 3).map(function (line, outputIndex) {
-                          return <li key={step.id + "-output-" + outputIndex}>{line}</li>;
-                        })}
-                      </ul>
-                    ) : null}
-                  </article>
-                );
-              })}
-            </div>
+                            <div className="node-times">
+                              {step.startedAt ? <span className="time-pill">Started {formatTime(step.startedAt)}</span> : null}
+                              {step.finishedAt ? <span className="time-pill">Finished {formatTime(step.finishedAt)}</span> : null}
+                              {step.currentCommand ? <span className="command-pill">{step.currentCommand}</span> : null}
+                              {step.output.length ? <span className="output-pill">{step.output.length} updates</span> : null}
+                            </div>
+
+                            {step.output.length ? (
+                              <ul className="node-output">
+                                {step.output.slice(0, 3).map(function (line, outputIndex) {
+                                  return <li key={step.id + "-output-" + outputIndex}>{line}</li>;
+                                })}
+                              </ul>
+                            ) : null}
+                          </article>
+                          {index < lane.steps.length - 1 ? (
+                            <div className={"pipeline-edge " + toneForEdge(step.status, lane.steps[index + 1].status)} aria-hidden="true"></div>
+                          ) : null}
+                        </React.Fragment>
+                      );
+                    })}
+                  </div>
+                </section>
+              );
+            })}
           </div>
         );
       }

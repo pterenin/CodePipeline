@@ -6,7 +6,12 @@ export function evaluateTicketGuardrails(
   ticket: JiraTicket,
   config: Pick<AppConfig, "hardBlockedKeywordPattern" | "weakRequirementThreshold">
 ): string | null {
-  const combinedText = `${ticket.summary}\n${ticket.description}\n${ticket.acceptanceCriteria ?? ""}`;
+  const combinedText = [
+    ticket.summary,
+    ticket.description,
+    ticket.acceptanceCriteria ?? "",
+    ticket.humanComments?.join("\n\n") ?? ""
+  ].join("\n");
 
   if (config.hardBlockedKeywordPattern.test(combinedText)) {
     return "Ticket contains hard-blocked keywords and is outside automation scope.";
