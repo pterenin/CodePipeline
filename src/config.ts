@@ -59,6 +59,7 @@ const configSchema = z
     VALIDATION_COMMANDS: z.string().trim().optional(),
     VALIDATION_REPAIR_ATTEMPTS: z.coerce.number().int().positive().default(5),
     DRY_RUN_BY_DEFAULT: z.stringbool().default(false),
+    PREVENT_SLEEP_DURING_RUNS: z.stringbool().default(false),
     VISUAL_REVIEW_ENABLED: z.stringbool().default(true),
     VISUAL_REVIEW_TIMEOUT_MS: z.coerce.number().int().positive().default(120000),
     VISUAL_REVIEW_STARTUP_TIMEOUT_MS: z.coerce.number().int().positive().default(120000),

@@ -25,7 +25,7 @@ CodePipeline is distributed as source, not as an npm package — clone the repo 
 - Applies guardrails to skip weak or unsafe tickets
 - Clones and refreshes a persistent local mirror of the target repository
 - Creates a fresh per-ticket git worktree and branch
-- Runs Codex CLI for context gathering, implementation, review, and validation repair
+- Runs Codex CLI to refresh ticket context during implementation, then review and validation repair
 - Optionally performs browser-based visual comparison when a ticket includes HTML example assets
 - Creates a draft GitHub pull request after validation, or commits directly to a non-`main` base branch when enabled
 - Posts the result back to Jira
@@ -143,6 +143,7 @@ The demo reads the fixtures under `fixtures/tickets/`, runs `evaluateTicketGuard
 - `VALIDATION_COMMANDS`: Optional JSON array or newline-separated list of validation commands to run inside the target repository
 - `VALIDATION_REPAIR_ATTEMPTS`: Max number of automated repair attempts after validation failures
 - `DRY_RUN_BY_DEFAULT`: When `true`, runs stop before commit/push, PR creation, and Jira mutations unless explicitly overridden
+- `PREVENT_SLEEP_DURING_RUNS`: On macOS, runs `caffeinate -i` while an active worker run is in progress so the computer does not idle-sleep mid-run
 - `VISUAL_REVIEW_ENABLED`: Enables browser-based HTML vs implementation comparison
 - `VISUAL_REVIEW_TIMEOUT_MS`: Per-page timeout for headless browser capture
 - `VISUAL_REVIEW_STARTUP_TIMEOUT_MS`: Timeout while waiting for a local preview server to start
@@ -200,17 +201,17 @@ Requests that the active run stop at the next safe interruption point.
    configurable hard-block keywords plus a minimum requirements-strength check.
 3. Refresh the persistent mirror and create a fresh worktree.
 4. Create a branch named `ai/<ticket>-<slug>`.
-5. Run a Codex context pass and refresh `docs/tickets/<ticket>.md`.
-6. Run the implementation pass in the prepared worktree.
-7. Optionally run browser-based visual review when a visual plan exists.
-8. Run a fresh implementation review pass.
-9. Run validation against the target repository:
+5. Run the implementation pass in the prepared worktree:
+   refresh `docs/tickets/<ticket>.md`, refresh the visual review plan, and implement the ticket in one Codex run.
+6. Optionally run browser-based visual review when a visual plan exists.
+7. Run a fresh implementation review pass.
+8. Run validation against the target repository:
    the configured `VALIDATION_COMMANDS`
-10. Attempt automated repair when validation fails.
-11. Commit and push if changes remain.
-12. Publish the result:
+9. Attempt automated repair when validation fails.
+10. Commit and push if changes remain.
+11. Publish the result:
     draft GitHub pull request by default, or direct commit to a non-`main` base branch when enabled.
-13. Comment back to Jira and try to label and transition the ticket.
+12. Comment back to Jira and try to label and transition the ticket.
 
 In dry-run mode, steps 11 through 13 are skipped after successful local validation.
 

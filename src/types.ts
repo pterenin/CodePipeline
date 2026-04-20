@@ -110,7 +110,6 @@ export const WORKFLOW_STEP_DEFINITIONS = [
   { id: "evaluate_guardrails", label: "Guardrails" },
   { id: "comment_start", label: "Start Comment" },
   { id: "prepare_repository", label: "Prepare Repo" },
-  { id: "document_context", label: "Document Context" },
   { id: "implement_changes", label: "Implement" },
   { id: "visual_review", label: "Visual Review" },
   { id: "review_implementation", label: "Review" },

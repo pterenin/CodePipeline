@@ -47,25 +47,6 @@ export class AgentService {
     });
   }
 
-  async documentTicketContext(
-    ticket: JiraTicket,
-    repoPath: string,
-    hooks?: {
-      onProgress?: (message: string) => void;
-      signal?: AbortSignal;
-    }
-  ): Promise<AgentRunResult> {
-    hooks?.onProgress?.(
-      "Launching Codex CLI to analyze the ticket and refresh its markdown context file."
-    );
-    return this.runCodex({
-      ticket,
-      repoPath,
-      mode: "context",
-      ...(hooks ? { hooks } : {})
-    });
-  }
-
   async repairFromValidation(
     ticket: JiraTicket,
     repoPath: string,
@@ -134,7 +115,7 @@ export class AgentService {
   private async runCodex(input: {
     ticket: JiraTicket;
     repoPath: string;
-    mode: "context" | "implementation" | "review" | "repair";
+    mode: "implementation" | "review" | "repair";
     validation?: ValidationResult;
     reviewFindingsPath?: string;
     hooks?: {
@@ -177,8 +158,8 @@ export class AgentService {
     });
 
     input.hooks?.onProgress?.(
-      input.mode === "context"
-        ? "Codex is inspecting the ticket, comments, assets, and repository to refresh the ticket markdown."
+      input.mode === "implementation"
+        ? "Codex is analyzing the ticket, comments, assets, and repository, refreshing the ticket context markdown, and implementing changes."
         : "Codex is inspecting the repository and making changes."
     );
 
@@ -189,6 +170,7 @@ export class AgentService {
           model: this.config.OPENAI_MODEL,
           outputPath,
           prompt,
+          imagePaths: jiraAssets.imagePaths,
           ...(this.config.CODEX_PROFILE ? { profile: this.config.CODEX_PROFILE } : {})
         }),
         {
@@ -409,7 +391,7 @@ export class AgentService {
 export function buildCodexPrompt(input: {
   ticket: JiraTicket;
   repoPath: string;
-  mode: "context" | "implementation" | "review" | "repair";
+  mode: "implementation" | "review" | "repair";
   validation?: ValidationResult;
   ticketContextPath: string;
   visualReviewPlanPath: string;
@@ -458,13 +440,12 @@ export function buildCodexPrompt(input: {
     : "";
 
   const modeInstructions =
-    input.mode === "context"
+    input.mode === "implementation"
       ? [
-          "Before broader repository exploration, open every repo-local context file listed below and treat it as required ticket context.",
-          "Your first task is to inspect the repository and create or refresh the ticket context markdown before any implementation work.",
+          "Before broader repository exploration, open every repo-local context file listed below and treat it as required context for this ticket.",
+          "Your first task is to analyze the whole ticket, all human comments, local Jira assets, and any referenced repo context files, then create or refresh the ticket context markdown before implementation work.",
           `Refresh this exact file: ${input.ticketContextPath}`,
           "The markdown must capture the full ticket context: summary, ticket URL, description, acceptance criteria, human comment chronology, repo-local context files referenced by the ticket, image and HTML example assets, files/components inspected, reusable components to reuse, smaller reusable components to create if needed, separation-of-concerns/readability notes, and a concrete implementation plan.",
-          "If the ticket includes an HTML example inline or as a downloaded HTML file, search the repository for the matching surface or example and record whether it already exists.",
           `Also create or refresh this exact visual review plan JSON: ${input.visualReviewPlanPath}`,
           "The visual review plan must always be valid JSON. When automated browser comparison is practical, enable it and provide the HTML example target plus the implementation preview command, working directory, URL, route selector, and viewport needed for headless review. When it is not practical, still create the file with `enabled: false` and a short reason.",
           "Use this visual review plan shape:",
@@ -477,66 +458,62 @@ export function buildCodexPrompt(input: {
           '  "implementation": { "type": "url", "url": "http://127.0.0.1:4173/route", "startCommand": "npm run dev -- --host 127.0.0.1 --port 4173", "workingDirectory": ".", "readySelector": "#root", "screenshotSelector": "#root", "delayMs": 400 },',
           '  "diff": { "maxDiffRatio": 0.03, "maxDiffPixels": 12000 }',
           "}",
-          "In this mode, only update documentation under docs/. Do not implement product code yet.",
-          "End with a short plain-text summary that mentions the ticket context markdown path you refreshed."
+          "After refreshing the markdown and visual review plan, continue directly into implementation in the same run. Do not stop after documentation updates.",
+          "If the ticket includes an HTML example inline or as a downloaded HTML attachment, check whether that example already exists in the repository.",
+          "If the ticket or comments imply an HTML example but no exact repo-local example is listed below, search the repository's `.html_examples/` folder for the best-matching surface and use that file as required context.",
+          "When aligning UI to an HTML example, do not copy the example's exact HTML structure. Reuse existing component composition, update styles and UI behavior accordingly, and extract smaller reusable components when that improves reuse, readability, or separation of concerns.",
+          "Prefer existing reusable components before creating new ones. If new pieces are needed, keep them small, composable, and aligned with best React practices.",
+          "Keep the ticket context markdown and visual review plan accurate whenever implementation changes your understanding of the target surface, reusable component plan, preview command, route, selector, or viewport assumptions used for browser comparison.",
+          ...(input.reviewFindingsPath
+            ? [
+                `Before editing, read and address the post-implementation review findings in: ${input.reviewFindingsPath}`,
+                "Treat every finding in that review document as required follow-up work unless you can clearly justify why it should not change the code."
+              ]
+            : []),
+          "Before you finish, re-check the whole ticket, acceptance criteria, human comments, HTML example guidance, and refreshed ticket context markdown to confirm every required change was implemented."
         ]
-      : input.mode === "implementation"
+      : input.mode === "review"
         ? [
-            "Before broader repository exploration, open every repo-local context file listed below and treat it as required context for this ticket.",
-            "Read the ticket context markdown first and use it as your working memory before you implement anything.",
-            `Ticket context markdown path: ${input.ticketContextPath}`,
-            `Visual review plan path: ${input.visualReviewPlanPath}`,
-            "Analyze the whole ticket, all human comments, and any local Jira assets before deciding what to edit.",
-            "If the ticket includes an HTML example inline or as a downloaded HTML attachment, check whether that example already exists in the repository.",
-            "When aligning UI to an HTML example, do not copy the example's exact HTML structure. Reuse existing component composition, update styles and UI behavior accordingly, and extract smaller reusable components when that improves reuse, readability, or separation of concerns.",
-            "Prefer existing reusable components before creating new ones. If new pieces are needed, keep them small, composable, and aligned with best React practices.",
-            "If a visual review plan JSON exists, keep it accurate whenever your implementation changes the local preview command, route, selector, or viewport assumptions used for browser comparison.",
-            ...(input.reviewFindingsPath
-              ? [
-                  `Before editing, read and address the post-implementation review findings in: ${input.reviewFindingsPath}`,
-                  "Treat every finding in that review document as required follow-up work unless you can clearly justify why it should not change the code."
-                ]
-              : [])
+            "You are a fresh reviewer for the already-implemented ticket. Re-analyze the ticket, comments, context markdown, local Jira assets, and current repository changes from scratch.",
+            `Read the ticket context markdown first: ${input.ticketContextPath}`,
+            `If it exists, read the visual review report before judging the implementation: ${input.visualReviewReportPath}`,
+            `Refresh this exact review file: ${buildImplementationReviewPath(input.ticket.key)}`,
+            "In review mode, only update the review markdown under docs/. Do not implement product code.",
+            "Review whether the current implementation fully addresses the ticket, comments, UI expectations, and any HTML example guidance.",
+            "If the ticket includes an HTML example, confirm that the implementation matched the intent without copying the exact example HTML structure.",
+            "Look specifically for missed requirements, weak reuse, poor separation of concerns, readability issues, and places where an existing component should have been reused.",
+            "Use this exact review file structure:",
+            "# Implementation Review",
+            "",
+            "Decision: approved | needs_follow_up",
+            "Summary: one sentence",
+            "",
+            "Findings:",
+            "- finding 1",
+            "- finding 2",
+            "",
+            "Use `- None.` when there are no findings.",
+            "Only include findings that are actionable and grounded in the ticket or current implementation."
           ]
-        : input.mode === "review"
-          ? [
-              "You are a fresh reviewer for the already-implemented ticket. Re-analyze the ticket, comments, context markdown, local Jira assets, and current repository changes from scratch.",
-              `Read the ticket context markdown first: ${input.ticketContextPath}`,
-              `If it exists, read the visual review report before judging the implementation: ${input.visualReviewReportPath}`,
-              `Refresh this exact review file: ${buildImplementationReviewPath(input.ticket.key)}`,
-              "In review mode, only update the review markdown under docs/. Do not implement product code.",
-              "Review whether the current implementation fully addresses the ticket, comments, UI expectations, and any HTML example guidance.",
-              "If the ticket includes an HTML example, confirm that the implementation matched the intent without copying the exact example HTML structure.",
-              "Look specifically for missed requirements, weak reuse, poor separation of concerns, readability issues, and places where an existing component should have been reused.",
-              "Use this exact review file structure:",
-              "# Implementation Review",
-              "",
-              "Decision: approved | needs_follow_up",
-              "Summary: one sentence",
-              "",
-              "Findings:",
-              "- finding 1",
-              "- finding 2",
-              "",
-              "Use `- None.` when there are no findings.",
-              "Only include findings that are actionable and grounded in the ticket or current implementation."
-            ]
-          : [
-              "Re-read the ticket context markdown before repairing validation failures.",
-              `Ticket context markdown path: ${input.ticketContextPath}`,
-              `If it exists, read the visual review report before repairing: ${input.visualReviewReportPath}`,
-              "Keep the implementation aligned with the documented plan, reusable component strategy, and any HTML example constraints.",
-              ...(input.reviewFindingsPath
-                ? [
-                    `Also read the post-implementation review findings in: ${input.reviewFindingsPath}`
-                  ]
-                : [])
-            ];
+        : [
+            "Re-read the ticket context markdown before repairing validation failures.",
+            `Ticket context markdown path: ${input.ticketContextPath}`,
+            `If it exists, read the visual review report before repairing: ${input.visualReviewReportPath}`,
+            "Keep the implementation aligned with the documented plan, reusable component strategy, and any HTML example constraints.",
+            ...(input.reviewFindingsPath
+              ? [`Also read the post-implementation review findings in: ${input.reviewFindingsPath}`]
+              : [])
+          ];
 
   return [
     "You are Codex working inside a git worktree created for a single Jira ticket.",
     "Inspect the repository directly before editing anything.",
     ...liveJiraInstructions,
+    ...(input.jiraImagePaths.length > 0
+      ? [
+          "Jira screenshots are attached to this Codex run as first-class image inputs. Inspect those image inputs directly when visual detail matters."
+        ]
+      : []),
     "Before wider repo exploration, read any exact repo-local context files listed below.",
     "Use repository search, file reads, git diff, and targeted validation commands as needed.",
     "Make the smallest complete code change that fully addresses the ticket, acceptance criteria, and material human comment feedback.",
@@ -578,13 +555,14 @@ export function buildCodexExecArgs(input: {
   model: string;
   outputPath: string;
   prompt: string;
+  imagePaths?: string[];
   profile?: string;
 }): string[] {
   return [
-    "exec",
-    ...(input.profile ? ["--profile", input.profile] : []),
     "-a",
     "never",
+    "exec",
+    ...(input.profile ? ["--profile", input.profile] : []),
     "-c",
     'model_reasoning_effort="xhigh"',
     "--sandbox",
@@ -594,6 +572,7 @@ export function buildCodexExecArgs(input: {
     "--skip-git-repo-check",
     "--model",
     input.model,
+    ...(input.imagePaths ?? []).flatMap((imagePath) => ["-i", imagePath]),
     input.prompt
   ];
 }

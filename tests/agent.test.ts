@@ -73,6 +73,41 @@ describe("buildCodexPrompt", () => {
 
     assert.doesNotMatch(prompt, /Atlassian MCP/);
   });
+
+  it("mentions attached Jira screenshots when image inputs are present", () => {
+    const prompt = buildCodexPrompt(
+      promptInput({
+        jiraImagePaths: ["/tmp/repo/.jira-assets/NEIRON-123/mockup.png"]
+      })
+    );
+
+    assert.match(prompt, /Jira screenshots are attached/);
+    assert.match(prompt, /image inputs directly/);
+  });
+
+  it("makes implementation mode refresh the context markdown and visual plan before coding", () => {
+    const prompt = buildCodexPrompt(promptInput());
+
+    assert.match(prompt, /Your first task is to analyze the whole ticket/);
+    assert.match(prompt, /Refresh this exact file: docs\/tickets\/NEIRON-123\.md/);
+    assert.match(
+      prompt,
+      /Also create or refresh this exact visual review plan JSON: docs\/tickets\/NEIRON-123\.visual-plan\.json/
+    );
+    assert.match(prompt, /continue directly into implementation in the same run/);
+    assert.match(prompt, /re-check the whole ticket, acceptance criteria, human comments/);
+  });
+
+  it("tells Codex to search .html_examples when the ticket implies an HTML example without an exact repo path", () => {
+    const prompt = buildCodexPrompt(
+      promptInput({
+        repoContextPaths: []
+      })
+    );
+
+    assert.match(prompt, /search the repository's `?\.html_examples\/`? folder/i);
+    assert.match(prompt, /use that file as required context/i);
+  });
 });
 
 describe("buildCodexExecArgs", () => {
@@ -84,7 +119,7 @@ describe("buildCodexExecArgs", () => {
       profile: "work"
     });
 
-    assert.deepEqual(args.slice(0, 4), ["exec", "--profile", "work", "-a"]);
+    assert.deepEqual(args.slice(0, 5), ["-a", "never", "exec", "--profile", "work"]);
   });
 
   it("omits the profile flag when no profile is configured", () => {
@@ -94,6 +129,23 @@ describe("buildCodexExecArgs", () => {
       prompt: "Implement the ticket"
     });
 
-    assert.deepEqual(args.slice(0, 2), ["exec", "-a"]);
+    assert.deepEqual(args.slice(0, 3), ["-a", "never", "exec"]);
+  });
+
+  it("attaches Jira screenshots as Codex image inputs when provided", () => {
+    const args = buildCodexExecArgs({
+      model: "gpt-5.4",
+      outputPath: "/tmp/last-message.txt",
+      prompt: "Implement the ticket",
+      imagePaths: ["/tmp/one.png", "/tmp/two.png"]
+    });
+
+    assert.deepEqual(args.slice(-5), [
+      "-i",
+      "/tmp/one.png",
+      "-i",
+      "/tmp/two.png",
+      "Implement the ticket"
+    ]);
   });
 });

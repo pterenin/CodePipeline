@@ -1,6 +1,6 @@
 # Pipeline Context Implementation Plan
 
-Status: Implemented on 2026-04-19.
+Status: Implemented on 2026-04-19. Updated on 2026-04-20.
 
 ## Goal
 
@@ -33,4 +33,7 @@ Make ticket-specific Codex runs behave more like the IDE workflow by carrying ri
 
 ## Notes
 
-This rollout intentionally keeps the existing worker flow intact. It improves prompt fidelity first, without yet changing the multi-pass context, implementation, review, and validation stages.
+The first rollout improved prompt fidelity while keeping a separate context-only Codex pass.
+As of 2026-04-20, the worker now folds that context refresh into the main implementation pass:
+Codex refreshes `docs/tickets/<ticket>.md` and the visual review plan first, then implements the ticket in the same run.
+Fresh review and validation still remain separate follow-up stages.

@@ -961,13 +961,13 @@ const appHtmlTemplate = `<!DOCTYPE html>
         {
           id: "prep",
           label: "Prep",
-          description: "Set up the worktree and collect context before any code changes.",
-          stepIds: ["prepare_repository", "document_context"]
+          description: "Set up the worktree so the implementation pass can gather context and edit safely.",
+          stepIds: ["prepare_repository"]
         },
         {
           id: "execute",
           label: "Execute",
-          description: "Implement the change, run browser-based comparison, review it, and validate until the branch is green.",
+          description: "Refresh ticket context, implement the change, run browser-based comparison, review it, and validate until the branch is green.",
           stepIds: ["implement_changes", "visual_review", "review_implementation", "validation"]
         },
         {
@@ -998,15 +998,10 @@ const appHtmlTemplate = `<!DOCTYPE html>
           phase: "Prep",
           helper: "Creates the isolated git worktree and branch for the active ticket."
         },
-        document_context: {
-          scope: "ticket",
-          phase: "Prep",
-          helper: "Builds the ticket context markdown so implementation keeps the full Jira history in view."
-        },
         implement_changes: {
           scope: "ticket",
           phase: "Execute",
-          helper: "Applies coding passes from the documented ticket context, including any follow-up fixes from review."
+          helper: "Analyzes the full ticket, refreshes the context markdown and visual review plan, applies the implementation, and handles any follow-up fixes from review."
         },
         visual_review: {
           scope: "ticket",

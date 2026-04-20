@@ -1,3 +1,5 @@
+import { execa } from "execa";
+
 import type { AppConfig } from "./config.js";
 import type {
   ImplementationReviewResult,
@@ -18,6 +20,12 @@ import { evaluateTicketGuardrails } from "./utils/guardrails.js";
 interface WorkerRunOptions {
   dryRun?: boolean;
 }
+
+type SleepAssertionProcess = {
+  exitCode: number | null | undefined;
+  kill: (signal?: string) => boolean;
+  catch: (onRejected?: (error: unknown) => unknown) => Promise<unknown>;
+};
 
 export class Worker {
   private readonly logger = new Logger("worker");
@@ -68,12 +76,14 @@ export class Worker {
     }
 
     const dryRun = options?.dryRun ?? this.config.DRY_RUN_BY_DEFAULT;
+    let sleepAssertionProcess: SleepAssertionProcess | undefined;
     this.isRunning = true;
     this.stopRequested = false;
     this.abortController = new AbortController();
     this.logger.info("Worker run started", { dryRun });
     monitor?.startRun();
     monitor?.log("Worker run started.");
+    sleepAssertionProcess = this.startSleepPrevention(monitor);
     if (dryRun) {
       monitor?.log(
         "Dry run mode is enabled. Publish, PR creation, and Jira mutation steps will be skipped."
@@ -141,11 +151,47 @@ export class Worker {
       });
       throw error;
     } finally {
+      await this.stopSleepPrevention(sleepAssertionProcess);
       this.logger.info("Worker run finished");
       this.isRunning = false;
       this.stopRequested = false;
       this.abortController = undefined;
     }
+  }
+
+  private startSleepPrevention(monitor?: RunMonitor): SleepAssertionProcess | undefined {
+    if (!shouldPreventSleep(this.config.PREVENT_SLEEP_DURING_RUNS)) {
+      return undefined;
+    }
+
+    try {
+      const child = execa("caffeinate", buildSleepPreventionArgs(), {
+        reject: false,
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "pipe"
+      });
+
+      this.logger.info("Started macOS sleep prevention for active worker run", {
+        command: "caffeinate -i"
+      });
+      monitor?.log("macOS idle sleep prevention is active for this worker run.");
+      return detachSleepAssertionProcess(child as SleepAssertionProcess);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn("Could not start macOS sleep prevention", { message });
+      monitor?.log(`Could not enable macOS sleep prevention: ${message}`);
+      return undefined;
+    }
+  }
+
+  private async stopSleepPrevention(childProcess?: SleepAssertionProcess): Promise<void> {
+    if (!childProcess || (childProcess.exitCode !== null && childProcess.exitCode !== undefined)) {
+      return;
+    }
+
+    childProcess.kill("SIGTERM");
+    await childProcess.catch(() => undefined);
   }
 
   private async processTickets(
@@ -274,69 +320,10 @@ export class Worker {
 
     try {
       this.throwIfStopped();
-      this.logger.info("Running agent ticket-context pass", { ticketKey: ticket.key });
-      monitor?.startStep(
-        "document_context",
-        "Analyzing the ticket and refreshing the ticket context markdown."
-      );
-      const contextRun = await this.agentService.documentTicketContext(ticket, repoPath, {
-        onProgress: (message) => {
-          monitor?.setStepDetail("document_context", message);
-        },
-        ...(this.abortController?.signal ? { signal: this.abortController.signal } : {})
-      });
-      this.throwIfStopped();
-      if (contextRun.decision === "needs_human_review") {
-        const message = contextRun.reason ?? contextRun.summary;
-        this.logger.warn("Ticket context documentation requires human review", {
-          ticketKey: ticket.key,
-          reason: message
-        });
-        monitor?.failStep("document_context", message, contextRun.changedFiles);
-        monitor?.skipStep(
-          "finalize_jira",
-          "No Jira comment posted because no draft PR was created."
-        );
-        return {
-          ok: true,
-          status: "needs_human_review",
-          ...(dryRun ? { dryRun: true } : {}),
-          ticketKey: ticket.key,
-          branchName,
-          message
-        };
-      }
-
-      if (contextRun.decision === "no_changes") {
-        const message = contextRun.reason ?? "Agent did not refresh the ticket context markdown.";
-        this.logger.warn("Ticket context documentation produced no changes", {
-          ticketKey: ticket.key,
-          reason: message
-        });
-        monitor?.failStep("document_context", message);
-        monitor?.skipStep(
-          "finalize_jira",
-          "No Jira comment posted because no draft PR was created."
-        );
-        return {
-          ok: false,
-          status: "failed",
-          ...(dryRun ? { dryRun: true } : {}),
-          ticketKey: ticket.key,
-          branchName,
-          message
-        };
-      }
-      monitor?.completeStep(
-        "document_context",
-        contextRun.summary,
-        contextRun.changedFiles.length > 0 ? contextRun.changedFiles : undefined
-      );
-
       this.logger.info("Running agent implementation pass", { ticketKey: ticket.key });
       monitor?.startStep(
         "implement_changes",
-        "Running the implementation agent from the documented ticket context."
+        "Running the implementation agent. It will refresh the ticket context markdown, create the visual review plan, and then apply the ticket changes."
       );
       const initialAgentRun = await this.agentService.implementTicket(ticket, repoPath, {
         onProgress: (message) => {
@@ -1165,4 +1152,28 @@ function isWorkerStoppedError(error: unknown): boolean {
   return (
     error instanceof WorkerStoppedError || (error instanceof Error && error.name === "AbortError")
   );
+}
+
+export function shouldPreventSleep(enabled: boolean, platform = process.platform): boolean {
+  return enabled && platform === "darwin";
+}
+
+export function buildSleepPreventionArgs(): string[] {
+  return ["-i"];
+}
+
+export function detachSleepAssertionProcess(
+  childProcess: SleepAssertionProcess
+): SleepAssertionProcess {
+  return {
+    get exitCode() {
+      return childProcess.exitCode;
+    },
+    kill(signal?: string) {
+      return childProcess.kill(signal);
+    },
+    catch(onRejected?: (error: unknown) => unknown) {
+      return childProcess.catch(onRejected);
+    }
+  };
 }
