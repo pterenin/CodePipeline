@@ -19,7 +19,8 @@ const visualReviewTargetSchema = z
     url: z.string().trim().optional(),
     readySelector: z.string().trim().optional(),
     screenshotSelector: z.string().trim().optional(),
-    delayMs: z.coerce.number().int().nonnegative().optional()
+    delayMs: z.coerce.number().int().nonnegative().optional(),
+    authenticated: z.boolean().default(false)
   })
   .superRefine((value, context) => {
     if (value.type === "file" && !value.path) {
@@ -102,7 +103,10 @@ export class VisualReviewService {
   constructor(
     private readonly config: Pick<
       AppConfig,
-      "VISUAL_REVIEW_ENABLED" | "VISUAL_REVIEW_TIMEOUT_MS" | "VISUAL_REVIEW_STARTUP_TIMEOUT_MS"
+      | "VISUAL_REVIEW_ENABLED"
+      | "VISUAL_REVIEW_TIMEOUT_MS"
+      | "VISUAL_REVIEW_STARTUP_TIMEOUT_MS"
+      | "VISUAL_REVIEW_STORAGE_STATE"
     >
   ) {}
 
@@ -316,6 +320,24 @@ export class VisualReviewService {
     }
   }
 
+  private async resolveStorageStatePath(repoPath: string): Promise<string | undefined> {
+    const configured = this.config.VISUAL_REVIEW_STORAGE_STATE?.trim();
+    if (!configured) {
+      throw new Error(
+        "Visual review target is marked authenticated but VISUAL_REVIEW_STORAGE_STATE is not set. Run `npm run visual:login` first."
+      );
+    }
+
+    const resolved = path.isAbsolute(configured) ? configured : path.resolve(repoPath, configured);
+    if (!(await fileExists(resolved))) {
+      throw new Error(
+        `Visual review storage state file not found at ${resolved}. Run \`npm run visual:login\` to create it.`
+      );
+    }
+
+    return resolved;
+  }
+
   private async loadPlan(repoPath: string, planPath: string): Promise<VisualReviewPlan | null> {
     const fullPath = path.join(repoPath, planPath);
     if (!(await fileExists(fullPath))) {
@@ -408,8 +430,12 @@ export class VisualReviewService {
     fullPage: boolean;
     signal?: AbortSignal;
   }): Promise<void> {
+    const storageStatePath = input.target.authenticated
+      ? await this.resolveStorageStatePath(input.repoPath)
+      : undefined;
     const context = await input.browser.newContext({
-      viewport: input.viewport
+      viewport: input.viewport,
+      ...(storageStatePath ? { storageState: storageStatePath } : {})
     });
 
     try {

@@ -59,7 +59,8 @@ const configSchema = z
     DRY_RUN_BY_DEFAULT: z.stringbool().default(false),
     VISUAL_REVIEW_ENABLED: z.stringbool().default(true),
     VISUAL_REVIEW_TIMEOUT_MS: z.coerce.number().int().positive().default(120000),
-    VISUAL_REVIEW_STARTUP_TIMEOUT_MS: z.coerce.number().int().positive().default(120000)
+    VISUAL_REVIEW_STARTUP_TIMEOUT_MS: z.coerce.number().int().positive().default(120000),
+    VISUAL_REVIEW_STORAGE_STATE: z.string().trim().optional()
   })
   .superRefine((value, context) => {
     if (!value.JIRA_JQL && !value.JIRA_PROJECT_KEY) {

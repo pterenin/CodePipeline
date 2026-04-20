@@ -1,6 +1,7 @@
 dist/
 node_modules/
 workdir/
+.visual-review/
 docs/screenshots/
 package-lock.json
 src/ui.ts

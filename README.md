@@ -144,6 +144,17 @@ The demo reads the fixtures under `fixtures/tickets/`, runs `evaluateTicketGuard
 - `VISUAL_REVIEW_ENABLED`: Enables browser-based HTML vs implementation comparison
 - `VISUAL_REVIEW_TIMEOUT_MS`: Per-page timeout for headless browser capture
 - `VISUAL_REVIEW_STARTUP_TIMEOUT_MS`: Timeout while waiting for a local preview server to start
+- `VISUAL_REVIEW_STORAGE_STATE`: Path to a Playwright storage-state file used for authenticated implementation targets
+
+### Visual review behind a login
+
+When the implementation target lives behind an authenticated dashboard, mark it `"authenticated": true` in the ticket's visual plan and prime a reusable session once:
+
+```bash
+VISUAL_REVIEW_LOGIN_URL=https://dashboard.example.invalid/login npm run visual:login
+```
+
+A browser window opens for you to sign in (including any MFA steps). Press Enter in the terminal once you are logged in; the helper writes the session to `VISUAL_REVIEW_STORAGE_STATE` (defaults to `.visual-review/storage-state.json`). Subsequent visual review runs reuse that state instead of prompting for credentials.
 
 ## API
 
