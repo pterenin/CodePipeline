@@ -11,7 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - First public-ready baseline of the self-hosted Jira-to-GitHub Codex worker
 - Dashboard redesigned as an n8n-style pipeline flow with the per-ticket review stage surfaced
 - Locally bundled dashboard assets built via esbuild (`scripts/build-dashboard.ts`)
-- Ticket guardrails that hard-block unsafe keywords and require strong requirements before a run
+- Configurable ticket guardrails: `GUARDRAIL_HARD_BLOCKED_KEYWORDS`, `GUARDRAIL_SCAN_HUMAN_COMMENTS`, `GUARDRAIL_WEAK_REQUIREMENT_THRESHOLD`
 - Configurable Jira surface: `JIRA_DONE_LABEL`, `JIRA_REVIEW_TRANSITION_NAME`, `JIRA_COMMENT_PREFIX`
 - Configurable validation commands via `VALIDATION_COMMANDS` (JSON array or newline list)
 - Dry-run worker mode (`DRY_RUN_BY_DEFAULT` and `?dryRun=true`) that skips publish and Jira mutations

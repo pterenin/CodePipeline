@@ -4,9 +4,21 @@ import { describe, it } from "node:test";
 import { evaluateTicketGuardrails } from "../src/utils/guardrails.js";
 import type { JiraTicket } from "../src/types.js";
 
-const guardrailConfig = {
-  hardBlockedKeywordPattern:
-    /\b(api[ -]?keys?|secrets?|private keys?|token rotation|database migrations?|schema migrations?|data backfills?|infrastructure migrations?|terraform|kubernetes|helm|deploy(?:ment|ments)?|ci\/cd|github actions|billing|payment)\b/i,
+const defaultConfig = {
+  hardBlockedKeywords: [
+    "api key",
+    "secret",
+    "private key",
+    "token rotation",
+    "database migration",
+    "schema migration",
+    "data backfill",
+    "infrastructure migration",
+    "terraform",
+    "kubernetes",
+    "helm"
+  ],
+  scanHumanCommentsInGuardrails: false,
   weakRequirementThreshold: 20
 };
 
@@ -31,25 +43,22 @@ const strongDescription = [
 
 describe("evaluateTicketGuardrails", () => {
   it("returns null for tickets with strong requirements and no hard-blocked keywords", () => {
-    const result = evaluateTicketGuardrails(ticket({ description: strongDescription }), guardrailConfig);
+    const result = evaluateTicketGuardrails(ticket({ description: strongDescription }), defaultConfig);
     assert.equal(result, null);
   });
 
   it("flags tickets that mention hard-blocked keywords in the summary", () => {
     const result = evaluateTicketGuardrails(
       ticket({ summary: "Rotate API key for production", description: strongDescription }),
-      guardrailConfig
+      defaultConfig
     );
     assert.match(result ?? "", /hard-blocked/i);
   });
 
-  it("flags hard-blocked keywords that appear only in human comments", () => {
+  it("tolerates the plural form of a configured keyword", () => {
     const result = evaluateTicketGuardrails(
-      ticket({
-        description: strongDescription,
-        humanComments: ["Reminder: this requires a database migration before shipping"]
-      }),
-      guardrailConfig
+      ticket({ description: `${strongDescription}\n\nPerform database migrations next sprint.` }),
+      defaultConfig
     );
     assert.match(result ?? "", /hard-blocked/i);
   });
@@ -57,7 +66,29 @@ describe("evaluateTicketGuardrails", () => {
   it("is case-insensitive for hard-blocked keywords", () => {
     const result = evaluateTicketGuardrails(
       ticket({ summary: "Update TERRAFORM modules", description: strongDescription }),
-      guardrailConfig
+      defaultConfig
+    );
+    assert.match(result ?? "", /hard-blocked/i);
+  });
+
+  it("ignores human comments by default", () => {
+    const result = evaluateTicketGuardrails(
+      ticket({
+        description: strongDescription,
+        humanComments: ["Reminder: this requires a database migration before shipping"]
+      }),
+      defaultConfig
+    );
+    assert.equal(result, null);
+  });
+
+  it("scans human comments when scanHumanCommentsInGuardrails is true", () => {
+    const result = evaluateTicketGuardrails(
+      ticket({
+        description: strongDescription,
+        humanComments: ["Reminder: this requires a database migration before shipping"]
+      }),
+      { ...defaultConfig, scanHumanCommentsInGuardrails: true }
     );
     assert.match(result ?? "", /hard-blocked/i);
   });
@@ -65,19 +96,19 @@ describe("evaluateTicketGuardrails", () => {
   it("rejects tickets with weak requirements", () => {
     const result = evaluateTicketGuardrails(
       ticket({ description: "Fix this" }),
-      guardrailConfig
+      defaultConfig
     );
     assert.match(result ?? "", /weak or incomplete/i);
   });
 
-  it("combines summary, description, acceptance criteria, and comments when evaluating strength", () => {
+  it("combines summary, description, and acceptance criteria when evaluating strength", () => {
     const result = evaluateTicketGuardrails(
       ticket({
         summary: "Short title",
         description: "",
         acceptanceCriteria: strongDescription
       }),
-      guardrailConfig
+      defaultConfig
     );
     assert.equal(result, null);
   });
@@ -85,7 +116,15 @@ describe("evaluateTicketGuardrails", () => {
   it("does not match unrelated substrings (word boundary)", () => {
     const result = evaluateTicketGuardrails(
       ticket({ description: `${strongDescription}\n\nNote: see keymaster.ts for context.` }),
-      guardrailConfig
+      defaultConfig
+    );
+    assert.equal(result, null);
+  });
+
+  it("disables keyword hard-blocks when the keyword list is empty", () => {
+    const result = evaluateTicketGuardrails(
+      ticket({ summary: "Rotate API key immediately", description: strongDescription }),
+      { ...defaultConfig, hardBlockedKeywords: [] }
     );
     assert.equal(result, null);
   });

@@ -44,7 +44,7 @@ Out of scope:
 - Avoid using direct commit mode on protected or business-critical branches until you are confident in your setup
 - Keep `JIRA_DONE_LABEL`, `JIRA_REVIEW_TRANSITION_NAME`, and `JIRA_COMMENT_PREFIX` under review so automation is distinguishable from human activity in Jira
 - Keep logs, `.env` files, and local `WORK_ROOT` contents private — worktrees can contain source code from the target repository
-- Treat the built-in hard-blocked keyword list in `src/config.ts` as a deny list, not a substitute for code review
+- Treat `GUARDRAIL_HARD_BLOCKED_KEYWORDS` as a deny list, not a substitute for code review; do not set it to an empty string unless you have compensating review
 - Test against repositories you control before pointing the worker at a production codebase
 - Start new environments with `DRY_RUN_BY_DEFAULT=true` and flip it off only after a clean successful run
 
@@ -68,4 +68,4 @@ Known amplifiers of blast radius:
 
 - `GIT_DIRECT_COMMITS=true` bypasses the pull-request review step
 - Broadly scoped Jira or GitHub tokens
-- Weakening `src/utils/guardrails.ts` without a compensating review process
+- Clearing `GUARDRAIL_HARD_BLOCKED_KEYWORDS` or lowering `GUARDRAIL_WEAK_REQUIREMENT_THRESHOLD` without a compensating review process
