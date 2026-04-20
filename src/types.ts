@@ -5,8 +5,17 @@ export interface JiraTicket {
   acceptanceCriteria?: string;
   imageAttachments?: JiraImageAttachment[];
   htmlAttachments?: JiraHtmlAttachment[];
+  comments?: JiraComment[];
   humanComments?: string[];
   url: string;
+}
+
+export interface JiraComment {
+  id?: string;
+  authorName?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  bodyText: string;
 }
 
 export interface JiraImageAttachment {

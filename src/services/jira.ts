@@ -1,7 +1,7 @@
 import axios, { type AxiosInstance } from "axios";
 
 import type { AppConfig } from "../config.js";
-import type { JiraHtmlAttachment, JiraImageAttachment, JiraTicket } from "../types.js";
+import type { JiraComment, JiraHtmlAttachment, JiraImageAttachment, JiraTicket } from "../types.js";
 import { Logger } from "../utils/logger.js";
 import { extractAcceptanceCriteria, normalizeWhitespace } from "../utils/text.js";
 
@@ -25,8 +25,17 @@ interface JiraSearchResponse {
 }
 
 interface JiraCommentResponse {
+  startAt?: number;
+  maxResults?: number;
+  total?: number;
   comments: Array<{
+    id?: string;
     body?: unknown;
+    author?: {
+      displayName?: string;
+    };
+    created?: string;
+    updated?: string;
   }>;
 }
 
@@ -91,7 +100,7 @@ export class JiraService {
         const description = normalizeWhitespace(extractPlainText(issue.fields.description));
         const acceptanceCriteria = extractAcceptanceCriteria(description);
         const imageAttachments = extractImageAttachments(issue.fields.attachment);
-        const humanComments = await this.getHumanComments(issue.key);
+        const comments = await this.getTicketComments(issue.key);
         const htmlAttachments = extractHtmlAttachments(issue.fields.attachment);
 
         const ticket: JiraTicket = {
@@ -113,8 +122,9 @@ export class JiraService {
           ticket.htmlAttachments = htmlAttachments;
         }
 
-        if (humanComments.length > 0) {
-          ticket.humanComments = humanComments;
+        if (comments.length > 0) {
+          ticket.comments = comments;
+          ticket.humanComments = comments.map((comment) => comment.bodyText);
         }
 
         return ticket;
@@ -180,22 +190,53 @@ export class JiraService {
     return true;
   }
 
-  private async getHumanComments(ticketKey: string): Promise<string[]> {
+  private async getTicketComments(ticketKey: string): Promise<JiraComment[]> {
     this.logger.info(`Fetching Jira comments for ${ticketKey}`);
 
-    const response = await this.client.get<JiraCommentResponse>(
-      `/rest/api/3/issue/${ticketKey}/comment`,
-      {
-        params: {
-          maxResults: 50
-        }
-      }
-    );
+    const comments: JiraComment[] = [];
+    const maxResults = 100;
+    let startAt = 0;
 
-    return response.data.comments
-      .map((comment) => normalizeWhitespace(extractPlainText(comment.body)))
-      .filter(Boolean)
-      .filter((comment) => !hasAutomationCommentPrefix(comment, this.config.JIRA_COMMENT_PREFIX));
+    while (true) {
+      const response = await this.client.get<JiraCommentResponse>(
+        `/rest/api/3/issue/${ticketKey}/comment`,
+        {
+          params: {
+            startAt,
+            maxResults
+          }
+        }
+      );
+
+      const pageComments = response.data.comments
+        .map((comment) => {
+          const bodyText = normalizeWhitespace(extractPlainText(comment.body));
+          if (!bodyText || hasAutomationCommentPrefix(bodyText, this.config.JIRA_COMMENT_PREFIX)) {
+            return null;
+          }
+
+          return {
+            ...(comment.id ? { id: comment.id } : {}),
+            ...(comment.author?.displayName ? { authorName: comment.author.displayName } : {}),
+            ...(comment.created ? { createdAt: comment.created } : {}),
+            ...(comment.updated ? { updatedAt: comment.updated } : {}),
+            bodyText
+          } satisfies JiraComment;
+        })
+        .filter((comment): comment is JiraComment => Boolean(comment));
+
+      comments.push(...pageComments);
+
+      const receivedCount = response.data.comments.length;
+      const total = response.data.total ?? startAt + receivedCount;
+      if (receivedCount === 0 || startAt + receivedCount >= total) {
+        break;
+      }
+
+      startAt += receivedCount;
+    }
+
+    return comments;
   }
 }
 

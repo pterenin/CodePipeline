@@ -50,6 +50,8 @@ const configSchema = z
     OPENAI_API_KEY: z.string().min(1),
     OPENAI_MODEL: z.string().min(1).default("gpt-5.4"),
     CODEX_CLI_PATH: z.string().min(1).default("codex"),
+    CODEX_PROFILE: z.string().trim().optional(),
+    CODEX_USE_ATLASSIAN_MCP: z.stringbool().default(true),
     GUARDRAIL_HARD_BLOCKED_KEYWORDS: z.string().trim().optional(),
     GUARDRAIL_SCAN_HUMAN_COMMENTS: z.stringbool().default(false),
     GUARDRAIL_WEAK_REQUIREMENT_THRESHOLD: z.coerce.number().int().positive().default(20),

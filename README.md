@@ -134,6 +134,8 @@ The demo reads the fixtures under `fixtures/tickets/`, runs `evaluateTicketGuard
 - `OPENAI_API_KEY`: API key available to the Codex CLI run
 - `OPENAI_MODEL`: Model passed to Codex CLI
 - `CODEX_CLI_PATH`: Path to the `codex` executable
+- `CODEX_PROFILE`: Optional Codex profile to use for non-interactive runs when your MCP/tool setup lives in a named profile
+- `CODEX_USE_ATLASSIAN_MCP`: When `true`, Codex is instructed to fetch the live Jira ticket through Atlassian MCP when that MCP server is available to the CLI
 - `GUARDRAIL_HARD_BLOCKED_KEYWORDS`: Optional JSON array or comma/newline-separated list of truly unsafe keywords or phrases; set it blank to disable keyword hard blocks
 - `GUARDRAIL_SCAN_HUMAN_COMMENTS`: When `true`, Jira human comments are included in keyword hard-block scanning
 - `GUARDRAIL_WEAK_REQUIREMENT_THRESHOLD`: Minimum requirement-strength score before a ticket is skipped as underspecified

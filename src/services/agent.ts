@@ -14,10 +14,16 @@ import type {
   ValidationResult
 } from "../types.js";
 import { Logger } from "../utils/logger.js";
+import {
+  collectTicketTextSources,
+  extractLikelyRepoFileReferences,
+  formatJiraCommentsForPrompt
+} from "../utils/ticket-context.js";
 import { truncate } from "../utils/text.js";
 
 export class AgentService {
   private readonly logger = new Logger("agent");
+  private atlassianMcpAvailability?: Promise<boolean>;
 
   constructor(private readonly config: AppConfig) {}
 
@@ -142,13 +148,22 @@ export class AgentService {
     const visualReviewPlanPath = buildVisualReviewPlanPath(input.ticket.key);
     const visualReviewReportPath = buildVisualReviewReportPath(input.ticket.key);
     const jiraAssets = await this.prepareJiraAssets(input.ticket, input.repoPath, signal);
+    const atlassianMcpAvailable = await this.isAtlassianMcpAvailable();
+    const repoContextPaths = await discoverRepoContextPaths(
+      input.ticket,
+      input.repoPath,
+      this.config.GITHUB_REPO
+    );
     const prompt = buildCodexPrompt({
       ...input,
       ticketContextPath,
       visualReviewPlanPath,
       visualReviewReportPath,
+      atlassianMcpEnabled: this.config.CODEX_USE_ATLASSIAN_MCP,
+      atlassianMcpAvailable,
       jiraImagePaths: jiraAssets.imagePaths,
       jiraHtmlExamplePaths: jiraAssets.htmlExamplePaths,
+      repoContextPaths,
       inlineHtmlExamples: extractInlineHtmlExamples(input.ticket),
       ...(jiraAssets.manifestPath ? { jiraAssetManifestPath: jiraAssets.manifestPath } : {})
     });
@@ -170,21 +185,12 @@ export class AgentService {
     try {
       const result = await execa(
         this.config.CODEX_CLI_PATH,
-        [
-          "-a",
-          "never",
-          "exec",
-          "-c",
-          'model_reasoning_effort="xhigh"',
-          "--sandbox",
-          "workspace-write",
-          "--output-last-message",
+        buildCodexExecArgs({
+          model: this.config.OPENAI_MODEL,
           outputPath,
-          "--skip-git-repo-check",
-          "--model",
-          this.config.OPENAI_MODEL,
-          prompt
-        ],
+          prompt,
+          ...(this.config.CODEX_PROFILE ? { profile: this.config.CODEX_PROFILE } : {})
+        }),
         {
           cwd: input.repoPath,
           reject: false,
@@ -252,6 +258,40 @@ export class AgentService {
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
+  }
+
+  private async isAtlassianMcpAvailable(): Promise<boolean> {
+    if (!this.config.CODEX_USE_ATLASSIAN_MCP) {
+      return false;
+    }
+
+    if (!this.atlassianMcpAvailability) {
+      this.atlassianMcpAvailability = (async () => {
+        const args = [
+          ...(this.config.CODEX_PROFILE ? ["--profile", this.config.CODEX_PROFILE] : []),
+          "mcp",
+          "get",
+          "atlassian"
+        ];
+        const result = await execa(this.config.CODEX_CLI_PATH, args, {
+          reject: false,
+          env: {
+            ...process.env,
+            OPENAI_API_KEY: this.config.OPENAI_API_KEY
+          }
+        });
+
+        return result.exitCode === 0;
+      })().catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.warn("Could not confirm Atlassian MCP availability for Codex CLI", {
+          message
+        });
+        return false;
+      });
+    }
+
+    return this.atlassianMcpAvailability;
   }
 
   private async prepareJiraAssets(
@@ -366,7 +406,7 @@ export class AgentService {
   }
 }
 
-function buildCodexPrompt(input: {
+export function buildCodexPrompt(input: {
   ticket: JiraTicket;
   repoPath: string;
   mode: "context" | "implementation" | "review" | "repair";
@@ -374,12 +414,33 @@ function buildCodexPrompt(input: {
   ticketContextPath: string;
   visualReviewPlanPath: string;
   visualReviewReportPath: string;
+  atlassianMcpEnabled: boolean;
+  atlassianMcpAvailable: boolean;
   reviewFindingsPath?: string;
   jiraImagePaths: string[];
   jiraHtmlExamplePaths: string[];
+  repoContextPaths: string[];
   inlineHtmlExamples: string[];
   jiraAssetManifestPath?: string;
 }): string {
+  const formattedComments = formatJiraCommentsForPrompt(
+    input.ticket.comments,
+    input.ticket.humanComments
+  );
+  const liveJiraInstructions =
+    input.atlassianMcpEnabled && input.atlassianMcpAvailable
+      ? [
+          "Atlassian MCP is available in this Codex session.",
+          `Before relying on the pre-fetched Jira snapshot below, use Atlassian MCP to fetch the live Jira issue by URL or key: ${input.ticket.url} (${input.ticket.key}).`,
+          "Use the live Jira read to inspect the current description, full comment history, and attachment/link context, then reconcile any differences against the pre-fetched snapshot in this prompt.",
+          "Treat the pre-fetched Jira data below as fallback context, not the sole source of truth."
+        ]
+      : input.atlassianMcpEnabled
+        ? [
+            "Atlassian MCP was requested for this Codex run, but it is not available in the current CLI environment.",
+            "Rely on the pre-fetched Jira snapshot below as the source of truth for this run."
+          ]
+        : [];
   const validationSummary = input.validation
     ? [
         "",
@@ -399,9 +460,10 @@ function buildCodexPrompt(input: {
   const modeInstructions =
     input.mode === "context"
       ? [
+          "Before broader repository exploration, open every repo-local context file listed below and treat it as required ticket context.",
           "Your first task is to inspect the repository and create or refresh the ticket context markdown before any implementation work.",
           `Refresh this exact file: ${input.ticketContextPath}`,
-          "The markdown must capture the full ticket context: summary, description, acceptance criteria, all human comments, image and HTML example assets, files/components inspected, reusable components to reuse, smaller reusable components to create if needed, separation-of-concerns/readability notes, and a concrete implementation plan.",
+          "The markdown must capture the full ticket context: summary, ticket URL, description, acceptance criteria, human comment chronology, repo-local context files referenced by the ticket, image and HTML example assets, files/components inspected, reusable components to reuse, smaller reusable components to create if needed, separation-of-concerns/readability notes, and a concrete implementation plan.",
           "If the ticket includes an HTML example inline or as a downloaded HTML file, search the repository for the matching surface or example and record whether it already exists.",
           `Also create or refresh this exact visual review plan JSON: ${input.visualReviewPlanPath}`,
           "The visual review plan must always be valid JSON. When automated browser comparison is practical, enable it and provide the HTML example target plus the implementation preview command, working directory, URL, route selector, and viewport needed for headless review. When it is not practical, still create the file with `enabled: false` and a short reason.",
@@ -420,6 +482,7 @@ function buildCodexPrompt(input: {
         ]
       : input.mode === "implementation"
         ? [
+            "Before broader repository exploration, open every repo-local context file listed below and treat it as required context for this ticket.",
             "Read the ticket context markdown first and use it as your working memory before you implement anything.",
             `Ticket context markdown path: ${input.ticketContextPath}`,
             `Visual review plan path: ${input.visualReviewPlanPath}`,
@@ -473,8 +536,11 @@ function buildCodexPrompt(input: {
   return [
     "You are Codex working inside a git worktree created for a single Jira ticket.",
     "Inspect the repository directly before editing anything.",
+    ...liveJiraInstructions,
+    "Before wider repo exploration, read any exact repo-local context files listed below.",
     "Use repository search, file reads, git diff, and targeted validation commands as needed.",
-    "Make the smallest complete code change that satisfies the ticket and acceptance criteria.",
+    "Make the smallest complete code change that fully addresses the ticket, acceptance criteria, and material human comment feedback.",
+    "When a ticket asks to update styles or UI from an example, address the full described surface rather than a narrow cosmetic subset.",
     "Prefer fixing the actual user-facing surface mentioned in the ticket instead of nearby or similarly named screens.",
     "If there are multiple plausible surfaces, inspect all relevant callers/components before choosing.",
     ...modeInstructions,
@@ -485,6 +551,7 @@ function buildCodexPrompt(input: {
     `Mode: ${input.mode}`,
     `Repository path: ${input.repoPath}`,
     `Ticket key: ${input.ticket.key}`,
+    `Ticket URL: ${input.ticket.url}`,
     `Ticket summary: ${input.ticket.summary}`,
     `Ticket description:\n${input.ticket.description || "(empty)"}`,
     `Acceptance criteria:\n${input.ticket.acceptanceCriteria ?? "(not explicitly provided)"}`,
@@ -493,17 +560,67 @@ function buildCodexPrompt(input: {
     `Jira asset manifest:\n${input.jiraAssetManifestPath ?? "(none)"}`,
     `Jira image attachments saved locally:\n${input.jiraImagePaths.join("\n") || "(none)"}`,
     `Jira HTML example attachments saved locally:\n${input.jiraHtmlExamplePaths.join("\n") || "(none)"}`,
+    `Repository-local context files mentioned by the ticket/comments:\n${input.repoContextPaths.join("\n") || "(none detected)"}`,
     `Possible inline HTML examples from the ticket/comments:\n${input.inlineHtmlExamples.join("\n\n---\n\n") || "(none detected)"}`,
-    `Human Jira comments:\n${input.ticket.humanComments?.join("\n\n---\n\n") ?? "(none)"}`,
+    `Human Jira comments with metadata:\n${formattedComments}`,
     `Post-implementation review findings path:\n${input.reviewFindingsPath ?? "(none)"}`,
     validationSummary,
     "",
-    "If Jira screenshots or HTML example files are provided, inspect the local files or manifest before editing the UI they describe.",
+    "If Jira screenshots, HTML example files, or repo-local context files are provided, inspect them before editing the UI they describe.",
     "Before you finish:",
     "1. Verify the ticketed surface was actually edited or intentionally justified.",
     "2. Run focused checks when feasible.",
     "3. Summarize the exact affected files and behavior."
   ].join("\n");
+}
+
+export function buildCodexExecArgs(input: {
+  model: string;
+  outputPath: string;
+  prompt: string;
+  profile?: string;
+}): string[] {
+  return [
+    "exec",
+    ...(input.profile ? ["--profile", input.profile] : []),
+    "-a",
+    "never",
+    "-c",
+    'model_reasoning_effort="xhigh"',
+    "--sandbox",
+    "workspace-write",
+    "--output-last-message",
+    input.outputPath,
+    "--skip-git-repo-check",
+    "--model",
+    input.model,
+    input.prompt
+  ];
+}
+
+async function discoverRepoContextPaths(
+  ticket: JiraTicket,
+  repoPath: string,
+  repoName?: string
+): Promise<string[]> {
+  const references = extractLikelyRepoFileReferences(collectTicketTextSources(ticket), repoName);
+  const resolvedPaths: string[] = [];
+
+  for (const reference of references) {
+    const resolvedPath = path.resolve(repoPath, reference);
+    const normalizedRepoPath = `${path.resolve(repoPath)}${path.sep}`;
+    if (!resolvedPath.startsWith(normalizedRepoPath) && resolvedPath !== path.resolve(repoPath)) {
+      continue;
+    }
+
+    if (!(await fileExists(resolvedPath))) {
+      continue;
+    }
+
+    resolvedPaths.push(path.relative(repoPath, resolvedPath).split(path.sep).join(path.posix.sep));
+  }
+
+  return Array.from(new Set(resolvedPaths));
 }
 
 async function ensureGitExclude(repoPath: string, entry: string): Promise<void> {
