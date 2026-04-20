@@ -1,5 +1,10 @@
-export function renderAppHtml(): string {
-  return `<!DOCTYPE html>
+const LEGACY_DASHBOARD_SCRIPT_PATTERN =
+  /<script crossorigin src="https:\/\/unpkg\.com\/react@18\/umd\/react\.production\.min\.js"><\/script>\s*<script crossorigin src="https:\/\/unpkg\.com\/react-dom@18\/umd\/react-dom\.production\.min\.js"><\/script>\s*<script src="https:\/\/unpkg\.com\/@babel\/standalone\/babel\.min\.js"><\/script>\s*<script type="text\/babel">[\s\S]*?<\/script>/;
+
+const INLINE_DASHBOARD_SCRIPT_PATTERN =
+  /<script type="text\/babel">([\s\S]*?)<\/script>/;
+
+const appHtmlTemplate = `<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -1608,4 +1613,19 @@ export function renderAppHtml(): string {
     </script>
   </body>
 </html>`;
+
+export function renderAppHtml(): string {
+  return appHtmlTemplate.replace(
+    LEGACY_DASHBOARD_SCRIPT_PATTERN,
+    '<script type="module" src="/assets/dashboard.js"></script>',
+  );
+}
+
+export function getDashboardClientSource(): string {
+  const match = appHtmlTemplate.match(INLINE_DASHBOARD_SCRIPT_PATTERN);
+  if (!match?.[1]) {
+    throw new Error("Embedded dashboard source was not found in src/ui.ts");
+  }
+
+  return match[1].trim();
 }

@@ -3,6 +3,13 @@ import { z } from "zod";
 
 dotenv.config();
 
+const DEFAULT_VALIDATION_COMMANDS = [
+  "npm ci",
+  "npm run lint",
+  "npm run build",
+  "npm run test"
+] as const;
+
 const configSchema = z
   .object({
     PORT: z.coerce.number().int().positive().default(3000),
@@ -29,7 +36,9 @@ const configSchema = z
     OPENAI_API_KEY: z.string().min(1),
     OPENAI_MODEL: z.string().min(1).default("gpt-5.4"),
     CODEX_CLI_PATH: z.string().min(1).default("codex"),
+    VALIDATION_COMMANDS: z.string().trim().optional(),
     VALIDATION_REPAIR_ATTEMPTS: z.coerce.number().int().positive().default(5),
+    DRY_RUN_BY_DEFAULT: z.stringbool().default(false),
     VISUAL_REVIEW_ENABLED: z.stringbool().default(true),
     VISUAL_REVIEW_TIMEOUT_MS: z.coerce.number().int().positive().default(120000),
     VISUAL_REVIEW_STARTUP_TIMEOUT_MS: z.coerce.number().int().positive().default(120000)
@@ -51,8 +60,20 @@ if (!parsed.success) {
   process.exit(1);
 }
 
+let validationCommands: string[];
+
+try {
+  validationCommands = parseValidationCommands(parsed.data.VALIDATION_COMMANDS);
+} catch (error) {
+  console.error("Invalid environment configuration", {
+    VALIDATION_COMMANDS: [error instanceof Error ? error.message : String(error)]
+  });
+  process.exit(1);
+}
+
 export const config = {
   ...parsed.data,
+  validationCommands,
   jiraForceIncludeKeys: (parsed.data.JIRA_FORCE_INCLUDE_KEYS ?? "")
     .split(",")
     .map((value) => value.trim())
@@ -63,3 +84,39 @@ export const config = {
 };
 
 export type AppConfig = typeof config;
+
+function parseValidationCommands(value?: string): string[] {
+  if (!value?.trim()) {
+    return [...DEFAULT_VALIDATION_COMMANDS];
+  }
+
+  const trimmed = value.trim();
+
+  if (trimmed.startsWith("[")) {
+    const parsedJson = JSON.parse(trimmed);
+    if (!Array.isArray(parsedJson)) {
+      throw new Error("VALIDATION_COMMANDS must be a JSON array of command strings.");
+    }
+
+    const commands = parsedJson
+      .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+      .filter(Boolean);
+
+    if (commands.length === 0) {
+      throw new Error("VALIDATION_COMMANDS must contain at least one non-empty command.");
+    }
+
+    return commands;
+  }
+
+  const commands = trimmed
+    .split(/\r?\n/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  if (commands.length === 0) {
+    throw new Error("VALIDATION_COMMANDS must contain at least one non-empty command.");
+  }
+
+  return commands;
+}

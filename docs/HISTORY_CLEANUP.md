@@ -8,6 +8,18 @@ Do not do this casually on an active shared branch. A rewrite changes commit IDs
 
 Use `git filter-repo` in a fresh clone.
 
+The repository now includes a helper script that creates a disposable mirror clone, rewrites history there, and leaves your current working tree untouched:
+
+```bash
+./scripts/prepare-public-history.sh
+```
+
+You can also point it at a specific source repo and output directory:
+
+```bash
+./scripts/prepare-public-history.sh https://github.com/pterenin/CodePipeline.git /tmp/codepipeline-public-history.git
+```
+
 ## High-Level Steps
 
 1. Create a fresh backup clone of the repository.
@@ -47,16 +59,16 @@ git log --all -- .env .env.example
 
 ## Secret Scanning
 
-Before a public launch, run a dedicated scan across the rewritten repository history. Tools commonly used for this include:
+Before a public launch, run a dedicated scan across the rewritten repository history. This repo now includes:
 
-- GitHub secret scanning
-- `gitleaks`
-- organization-specific secret scanning tooling
+- `.gitleaks.toml` for public placeholder allowlisting
+- `.github/workflows/secret-scan.yml` for continuous scanning in GitHub Actions
 
-Example with `gitleaks` if you have it installed:
+Example local scan with Dockerized `gitleaks`:
 
 ```bash
-gitleaks detect --source .
+docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest \
+  git /repo --no-banner --redact --config /repo/.gitleaks.toml
 ```
 
 ## After The Rewrite

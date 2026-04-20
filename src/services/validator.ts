@@ -3,15 +3,10 @@ import { execa } from "execa";
 import type { ValidationResult, ValidationStepResult } from "../types.js";
 import { Logger } from "../utils/logger.js";
 
-const VALIDATION_COMMANDS = [
-  ["npm", "ci"],
-  ["npm", "run", "lint"],
-  ["npm", "run", "build"],
-  ["npm", "run", "test"],
-] as const;
-
 export class ValidatorService {
   private readonly logger = new Logger("validator");
+
+  constructor(private readonly commands: string[]) {}
 
   async run(
     repoPath: string,
@@ -20,19 +15,21 @@ export class ValidatorService {
       signal?: AbortSignal;
     },
   ): Promise<ValidationResult> {
-    this.logger.info("Starting validation run", { repoPath });
+    this.logger.info("Starting validation run", {
+      repoPath,
+      commands: this.commands
+    });
     const steps: ValidationStepResult[] = [];
 
-    for (const commandParts of VALIDATION_COMMANDS) {
-      const [command, ...args] = commandParts;
-      const commandLabel = commandParts.join(" ");
+    for (const commandLabel of this.commands) {
       this.logger.info("Running validation command", {
         command: commandLabel,
       });
       hooks?.onCommandStart?.(commandLabel);
       try {
-        const result = await execa(command, args, {
+        const result = await execa(commandLabel, {
           cwd: repoPath,
+          shell: true,
           reject: false,
           all: false,
           ...(hooks?.signal ? { cancelSignal: hooks.signal } : {}),

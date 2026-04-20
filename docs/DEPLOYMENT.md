@@ -13,6 +13,14 @@ This project now includes a Dockerfile and a simple Compose setup for self-hoste
 
 Use a dedicated `.env` file with service-account credentials and keep it out of version control.
 
+For a cautious first deployment, consider setting:
+
+```env
+DRY_RUN_BY_DEFAULT=true
+```
+
+That lets you verify Jira fetch, repository preparation, Codex execution, and validation before allowing push, pull request creation, or Jira mutations.
+
 The container needs outbound access to:
 
 - Jira
@@ -64,5 +72,6 @@ The Compose file bind-mounts `./workdir` into `/app/workdir` so the persistent r
 ## Notes
 
 - If you do not need browser-based visual review, set `VISUAL_REVIEW_ENABLED=false`.
+- Validation commands can be customized with `VALIDATION_COMMANDS`.
 - The app still serves its dashboard from the same HTTP process.
 - The Docker image is intended for self-hosting, not a managed multi-tenant deployment.

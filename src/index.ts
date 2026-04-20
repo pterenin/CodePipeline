@@ -1,3 +1,6 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import express from "express";
 
 import { config } from "./config.js";
@@ -10,8 +13,13 @@ const app = express();
 const logger = new Logger("http");
 const worker = new Worker(config);
 const monitor = new RunMonitor();
+const assetDirectory = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../dist/assets",
+);
 
 app.use(express.json());
+app.use("/assets", express.static(assetDirectory));
 
 app.get("/", (_request, response) => {
   response.type("html").send(renderAppHtml());
@@ -52,10 +60,34 @@ app.post("/api/run", (_request, response) => {
     return;
   }
 
-  void runTriggeredExecution("ui");
+  const dryRun = readDryRunFlag(_request);
+  void runTriggeredExecution("ui", { ...(dryRun !== undefined ? { dryRun } : {}) });
   response.status(202).json({
     ok: true,
-    message: "Worker run started.",
+    message:
+      dryRun === true
+        ? "Dry run started."
+        : config.DRY_RUN_BY_DEFAULT
+          ? "Worker run started using default dry-run mode."
+          : "Worker run started.",
+  });
+});
+
+app.post("/api/run/dry-run", (_request, response) => {
+  logger.info("Received UI dry-run request");
+  if (worker.running) {
+    logger.warn("Rejected UI dry-run request because worker is already running");
+    response.status(409).json({
+      ok: false,
+      message: "A worker run is already in progress.",
+    });
+    return;
+  }
+
+  void runTriggeredExecution("ui-dry-run", { dryRun: true });
+  response.status(202).json({
+    ok: true,
+    message: "Dry run started.",
   });
 });
 
@@ -88,7 +120,8 @@ app.post("/run-next", async (_request, response) => {
   }
 
   try {
-    const result = await worker.runNext(monitor);
+    const dryRun = readDryRunFlag(_request);
+    const result = await worker.runNext(monitor, { ...(dryRun !== undefined ? { dryRun } : {}) });
     logger.info("Completed run-next request", {
       status: result.status,
       ticketKey: result.ticketKey,
@@ -110,11 +143,19 @@ app.listen(config.PORT, () => {
   );
 });
 
-async function runTriggeredExecution(source: string): Promise<void> {
-  logger.info("Starting triggered execution", { source });
+async function runTriggeredExecution(
+  source: string,
+  options?: {
+    dryRun?: boolean;
+  }
+): Promise<void> {
+  logger.info("Starting triggered execution", {
+    source,
+    dryRun: options?.dryRun ?? false
+  });
 
   try {
-    const result = await worker.runNext(monitor);
+    const result = await worker.runNext(monitor, options);
     logger.info("Triggered execution completed", {
       source,
       status: result.status,
@@ -132,3 +173,28 @@ process.on("SIGINT", () => {
 process.on("SIGTERM", () => {
   process.exit(0);
 });
+
+function readDryRunFlag(request: {
+  query?: Record<string, unknown>;
+  body?: Record<string, unknown>;
+}): boolean | undefined {
+  const bodyValue = request.body?.dryRun;
+  if (typeof bodyValue === "boolean") {
+    return bodyValue;
+  }
+
+  if (typeof bodyValue === "string") {
+    return parseBooleanLike(bodyValue);
+  }
+
+  const queryValue = request.query?.dryRun;
+  if (typeof queryValue === "string") {
+    return parseBooleanLike(queryValue);
+  }
+
+  return undefined;
+}
+
+function parseBooleanLike(value: string): boolean {
+  return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+}

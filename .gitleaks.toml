@@ -1,0 +1,9 @@
+title = "CodePipeline gitleaks config"
+
+[allowlist]
+description = "Placeholder example values used in public documentation"
+regexes = [
+  '''your-jira-api-token''',
+  '''your-github-token''',
+  '''your-openai-api-key''',
+]

@@ -10,6 +10,10 @@ import { VisualReviewService } from "./services/visual-review.js";
 import { Logger } from "./utils/logger.js";
 import { evaluateTicketGuardrails } from "./utils/guardrails.js";
 
+interface WorkerRunOptions {
+  dryRun?: boolean;
+}
+
 export class Worker {
   private readonly logger = new Logger("worker");
   private readonly jiraService: JiraService;
@@ -26,7 +30,7 @@ export class Worker {
     this.jiraService = new JiraService(config);
     this.githubService = new GitHubService(config);
     this.gitService = new GitService(config);
-    this.validatorService = new ValidatorService();
+    this.validatorService = new ValidatorService(config.validationCommands);
     this.agentService = new AgentService(config);
     this.visualReviewService = new VisualReviewService(config);
   }
@@ -51,17 +55,21 @@ export class Worker {
     return true;
   }
 
-  async runNext(monitor?: RunMonitor): Promise<WorkerRunResult> {
+  async runNext(monitor?: RunMonitor, options?: WorkerRunOptions): Promise<WorkerRunResult> {
     if (this.isRunning) {
       throw new Error("Worker is already running.");
     }
 
+    const dryRun = options?.dryRun ?? this.config.DRY_RUN_BY_DEFAULT;
     this.isRunning = true;
     this.stopRequested = false;
     this.abortController = new AbortController();
-    this.logger.info("Worker run started");
+    this.logger.info("Worker run started", { dryRun });
     monitor?.startRun();
     monitor?.log("Worker run started.");
+    if (dryRun) {
+      monitor?.log("Dry run mode is enabled. Publish, PR creation, and Jira mutation steps will be skipped.");
+    }
 
     try {
       monitor?.startStep("fetch_ticket", "Loading Jira tickets that match the queue filter.");
@@ -72,6 +80,7 @@ export class Worker {
         const result: WorkerRunResult = {
           ok: true,
           status: "no_ticket",
+          ...(dryRun ? { dryRun: true } : {}),
           message: "No Jira ticket matched the configured JQL filter."
         };
         monitor?.completeStep("fetch_ticket", result.message);
@@ -95,7 +104,7 @@ export class Worker {
         "fetch_ticket"
       );
 
-      const result = await this.processTickets(tickets, monitor);
+      const result = await this.processTickets(tickets, monitor, { dryRun });
       monitor?.finishRun(result);
       return result;
     } catch (error) {
@@ -103,6 +112,7 @@ export class Worker {
         const result: WorkerRunResult = {
           ok: true,
           status: "stopped",
+          ...(dryRun ? { dryRun: true } : {}),
           message: "Pipeline stopped by user request."
         };
         monitor?.failCurrentStep(result.message);
@@ -117,6 +127,7 @@ export class Worker {
       monitor?.finishRun({
         ok: false,
         status: "failed",
+        ...(dryRun ? { dryRun: true } : {}),
         message
       });
       throw error;
@@ -128,7 +139,11 @@ export class Worker {
     }
   }
 
-  private async processTickets(tickets: JiraTicket[], monitor?: RunMonitor): Promise<WorkerRunResult> {
+  private async processTickets(
+    tickets: JiraTicket[],
+    monitor?: RunMonitor,
+    options?: WorkerRunOptions
+  ): Promise<WorkerRunResult> {
     let successfulTickets = 0;
     let failedTickets = 0;
     let lastResult: WorkerRunResult | undefined;
@@ -138,7 +153,7 @@ export class Worker {
       monitor?.startTicket(ticket.key, `Processing ${ticket.key}: ${ticket.summary}`);
       monitor?.log(`Starting ticket ${ticket.key}.`);
 
-      const ticketResult = await this.processTicket(ticket, monitor);
+      const ticketResult = await this.processTicket(ticket, monitor, options);
       lastResult = ticketResult;
 
       if (ticketResult.status === "success") {
@@ -165,6 +180,7 @@ export class Worker {
     return {
       ok: failedTickets === 0,
       status: resultStatus,
+      ...(options?.dryRun ? { dryRun: true } : {}),
       ...(lastResult?.ticketKey ? { ticketKey: lastResult.ticketKey } : {}),
       ...(lastResult?.branchName ? { branchName: lastResult.branchName } : {}),
       ...(lastResult?.pullRequestUrl ? { pullRequestUrl: lastResult.pullRequestUrl } : {}),
@@ -176,15 +192,22 @@ export class Worker {
       message:
         failedTickets > 0
           ? `Processed ${processedTickets} tickets. ${successfulTickets} succeeded and ${failedTickets} failed.`
-          : `Processed ${processedTickets} tickets successfully.`
+          : options?.dryRun
+            ? `Dry run processed ${processedTickets} tickets successfully.`
+            : `Processed ${processedTickets} tickets successfully.`
     };
   }
 
-  private async processTicket(ticket: JiraTicket, monitor?: RunMonitor): Promise<WorkerRunResult> {
+  private async processTicket(
+    ticket: JiraTicket,
+    monitor?: RunMonitor,
+    options?: WorkerRunOptions
+  ): Promise<WorkerRunResult> {
     this.throwIfStopped();
     this.logger.info(`Processing ticket ${ticket.key}`, {
       summary: ticket.summary
     });
+    const dryRun = options?.dryRun ?? false;
     const useDirectCommits = this.shouldUseDirectCommits();
 
     if (this.config.GIT_DIRECT_COMMITS && !useDirectCommits) {
@@ -213,6 +236,7 @@ export class Worker {
       return {
         ok: true,
         status: "skipped",
+        ...(dryRun ? { dryRun: true } : {}),
         ticketKey: ticket.key,
         message: guardrailFailure
       };
@@ -250,6 +274,7 @@ export class Worker {
         return {
           ok: true,
           status: "needs_human_review",
+          ...(dryRun ? { dryRun: true } : {}),
           ticketKey: ticket.key,
           branchName,
           message
@@ -267,6 +292,7 @@ export class Worker {
         return {
           ok: false,
           status: "failed",
+          ...(dryRun ? { dryRun: true } : {}),
           ticketKey: ticket.key,
           branchName,
           message
@@ -298,6 +324,7 @@ export class Worker {
         return {
           ok: true,
           status: "needs_human_review",
+          ...(dryRun ? { dryRun: true } : {}),
           ticketKey: ticket.key,
           branchName,
           message
@@ -315,6 +342,7 @@ export class Worker {
         return {
           ok: false,
           status: "failed",
+          ...(dryRun ? { dryRun: true } : {}),
           ticketKey: ticket.key,
           branchName,
           message
@@ -339,6 +367,7 @@ export class Worker {
         return {
           ok: true,
           status: "needs_human_review",
+          ...(dryRun ? { dryRun: true } : {}),
           ticketKey: ticket.key,
           branchName,
           message
@@ -407,6 +436,7 @@ export class Worker {
           return {
             ok: true,
             status: "needs_human_review",
+            ...(dryRun ? { dryRun: true } : {}),
             ticketKey: ticket.key,
             branchName,
             message
@@ -424,6 +454,7 @@ export class Worker {
           return {
             ok: false,
             status: "failed",
+            ...(dryRun ? { dryRun: true } : {}),
             ticketKey: ticket.key,
             branchName,
             message
@@ -450,6 +481,7 @@ export class Worker {
             return {
               ok: true,
               status: "needs_human_review",
+              ...(dryRun ? { dryRun: true } : {}),
               ticketKey: ticket.key,
               branchName,
               message
@@ -477,6 +509,7 @@ export class Worker {
           return {
             ok: true,
             status: "needs_human_review",
+            ...(dryRun ? { dryRun: true } : {}),
             ticketKey: ticket.key,
             branchName,
             message
@@ -500,6 +533,7 @@ export class Worker {
           return {
             ok: true,
             status: "needs_human_review",
+            ...(dryRun ? { dryRun: true } : {}),
             ticketKey: ticket.key,
             branchName,
             message
@@ -554,6 +588,7 @@ export class Worker {
           return {
             ok: false,
             status: "validation_failed",
+            ...(dryRun ? { dryRun: true } : {}),
             ticketKey: ticket.key,
             branchName,
             message,
@@ -578,6 +613,7 @@ export class Worker {
         return {
           ok: false,
           status: "validation_failed",
+          ...(dryRun ? { dryRun: true } : {}),
           ticketKey: ticket.key,
           branchName,
           message: `Validation failed after ${this.config.VALIDATION_REPAIR_ATTEMPTS} repair attempt(s).`,
@@ -599,9 +635,45 @@ export class Worker {
         return {
           ok: false,
           status: "failed",
+          ...(dryRun ? { dryRun: true } : {}),
           ticketKey: ticket.key,
           branchName,
           message: "Validation passed but repository has no file changes."
+        };
+      }
+
+      if (dryRun) {
+        this.logger.info("Dry run completed before publish steps", {
+          ticketKey: ticket.key,
+          branchName,
+          publishMode: useDirectCommits ? "direct_commit" : "pull_request"
+        });
+        monitor?.skipStep(
+          "commit_push",
+          useDirectCommits
+            ? `Dry run mode: skipped committing and pushing to ${this.config.GIT_BASE_BRANCH}.`
+            : `Dry run mode: skipped committing and pushing branch ${branchName}.`
+        );
+        monitor?.skipStep(
+          "create_pull_request",
+          useDirectCommits
+            ? "Dry run mode: no pull request would be created in direct-commit mode."
+            : "Dry run mode: skipped draft pull request creation."
+        );
+        monitor?.skipStep(
+          "finalize_jira",
+          "Dry run mode: skipped Jira comment, label, and transition updates."
+        );
+
+        return {
+          ok: true,
+          status: "success",
+          dryRun: true,
+          ticketKey: ticket.key,
+          branchName,
+          validation,
+          message:
+            "Dry run completed successfully. Changes were validated locally and publish steps were skipped."
         };
       }
 
@@ -715,6 +787,7 @@ export class Worker {
       return {
         ok: true,
         status: "success",
+        ...(dryRun ? { dryRun: true } : {}),
         ticketKey: ticket.key,
         branchName: useDirectCommits ? this.config.GIT_BASE_BRANCH : branchName,
         ...(pullRequestUrl ? { pullRequestUrl } : {}),
@@ -883,29 +956,12 @@ function formatVisualReviewLine(review: VisualReviewResult): string {
 }
 
 function buildValidationSummaryLines(validation: NonNullable<WorkerRunResult["validation"]>): string[] {
-  const lines: string[] = [];
-  const stepsByCommand = new Map(validation.steps.map((step) => [step.command, step]));
-
-  const installStep = stepsByCommand.get("npm ci");
-  if (installStep?.success) {
-    lines.push("Dependency install: passed (`npm ci`).");
+  const passedSteps = validation.steps.filter((step) => step.success);
+  if (passedSteps.length === 0) {
+    return ["Validation: passed."];
   }
 
-  const buildStep = stepsByCommand.get("npm run build");
-  if (buildStep?.success) {
-    lines.push("Build: passed (`npm run build`).");
-  }
-
-  const testStep = stepsByCommand.get("npm run test");
-  if (testStep?.success) {
-    lines.push("Unit tests: passed (`npm run test`).");
-  }
-
-  if (lines.length === 0) {
-    lines.push("Validation: passed.");
-  }
-
-  return lines;
+  return passedSteps.map((step) => `Validation command passed: \`${step.command}\`.`);
 }
 
 class WorkerStoppedError extends Error {

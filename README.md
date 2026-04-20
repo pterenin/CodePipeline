@@ -26,10 +26,9 @@ It is built for cautious human-reviewed automation rather than fully autonomous 
 ## Current Assumptions
 
 - Jira is the work queue and GitHub is the delivery destination
-- The target repository uses npm and supports these commands:
-  `npm ci`, `npm run lint`, `npm run build`, `npm run test`
+- Validation commands are configurable, but the default command set assumes an npm-based repository
 - Codex CLI is installed locally and can be invoked as `codex` unless `CODEX_CLI_PATH` is set
-- The dashboard is served by the app itself and currently loads React 18 UMD bundles from `unpkg.com`
+- The dashboard is served by the app itself and bundled into a local browser asset during build/dev
 
 ## Quickstart
 
@@ -59,6 +58,12 @@ npm run dev
 
 ```bash
 curl -X POST http://localhost:3000/run-next
+```
+
+For a safer first verification run that skips push, pull request creation, and Jira mutations:
+
+```bash
+curl -X POST "http://localhost:3000/run-next?dryRun=true"
 ```
 
 ## Requirements
@@ -111,7 +116,9 @@ curl -X POST http://localhost:3000/run-next
 - `OPENAI_API_KEY`: API key available to the Codex CLI run
 - `OPENAI_MODEL`: Model passed to Codex CLI
 - `CODEX_CLI_PATH`: Path to the `codex` executable
+- `VALIDATION_COMMANDS`: Optional JSON array or newline-separated list of validation commands to run inside the target repository
 - `VALIDATION_REPAIR_ATTEMPTS`: Max number of automated repair attempts after validation failures
+- `DRY_RUN_BY_DEFAULT`: When `true`, runs stop before commit/push, PR creation, and Jira mutations unless explicitly overridden
 - `VISUAL_REVIEW_ENABLED`: Enables browser-based HTML vs implementation comparison
 - `VISUAL_REVIEW_TIMEOUT_MS`: Per-page timeout for headless browser capture
 - `VISUAL_REVIEW_STARTUP_TIMEOUT_MS`: Timeout while waiting for a local preview server to start
@@ -141,6 +148,11 @@ Streams live workflow updates over Server-Sent Events.
 ### `POST /api/run`
 
 Starts a worker run asynchronously for the browser UI. If a run is already active, the endpoint returns HTTP `409`.
+Pass `{"dryRun": true}` in the JSON body to skip publish and Jira mutation steps.
+
+### `POST /api/run/dry-run`
+
+Starts a dry run asynchronously for the browser UI. The worker still fetches Jira tickets, prepares the repository, runs Codex, and performs validation, but it skips commit/push, pull request creation, and Jira updates.
 
 ### `POST /api/run/stop`
 
@@ -157,12 +169,14 @@ Requests that the active run stop at the next safe interruption point.
 7. Optionally run browser-based visual review when a visual plan exists.
 8. Run a fresh implementation review pass.
 9. Run validation against the target repository:
-   `npm ci`, `npm run lint`, `npm run build`, `npm run test`
+   the configured `VALIDATION_COMMANDS`
 10. Attempt automated repair when validation fails.
 11. Commit and push if changes remain.
 12. Publish the result:
     draft GitHub pull request by default, or direct commit to a non-`main` base branch when enabled.
 13. Comment back to Jira and try to label and transition the ticket.
+
+In dry-run mode, steps 11 through 13 are skipped after successful local validation.
 
 ## Security Notes
 
@@ -176,13 +190,13 @@ Requests that the active run stop at the next safe interruption point.
 
 - Docker and Compose setup: [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md)
 - Git history cleanup guidance before public launch: [docs/HISTORY_CLEANUP.md](./docs/HISTORY_CLEANUP.md)
+- Secret scanning runs in GitHub Actions via [`.github/workflows/secret-scan.yml`](./.github/workflows/secret-scan.yml)
 
 ## Current Limitations
 
 - Single process, single repository, no database
 - Run history is not persisted across restarts
-- Validation commands are currently hardcoded for npm-based repositories
-- The dashboard frontend is embedded in a string-based HTML renderer rather than a standalone frontend build
+- The dashboard source still lives in a string-based server renderer, even though the shipped browser code is bundled locally
 
 ## Contributing
 

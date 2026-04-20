@@ -84,6 +84,7 @@ export type WorkerRunStatus =
 export interface WorkerRunResult {
   ok: boolean;
   status: WorkerRunStatus;
+  dryRun?: boolean;
   ticketKey?: string;
   branchName?: string;
   pullRequestUrl?: string;

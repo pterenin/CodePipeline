@@ -29,16 +29,16 @@ This document tracks the work needed to make CodePipeline a healthy public repos
 - [x] Add basic package metadata for a public repository
 - [x] Add basic CI for install, typecheck, and build
 - [ ] Rewrite git history if needed so committed dependency/build artifacts never appear in the public baseline
-- [ ] Run a dedicated secret scan across git history before broad announcement
+- [x] Run a dedicated secret scan across git history before broad announcement
 
 ## Phase 2: Productization
 
 - [x] Make Jira success label configurable instead of hardcoding `ai-done`
 - [x] Make the Jira follow-up transition target configurable instead of hardcoding `In Review`
 - [x] Make the Jira comment prefix configurable instead of hardcoding `AI Agent:`
-- [ ] Make validation commands configurable per target repository
-- [ ] Add a safer dry-run mode for setup verification
-- [ ] Bundle dashboard assets locally instead of loading React from a CDN at runtime
+- [x] Make validation commands configurable per target repository
+- [x] Add a safer dry-run mode for setup verification
+- [x] Bundle dashboard assets locally instead of loading React from a CDN at runtime
 - [x] Add a Docker-based deployment path
 
 ## Phase 3: Trust And Maintenance
