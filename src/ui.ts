@@ -577,6 +577,11 @@ const appHtmlTemplate = `<!DOCTYPE html>
         color: var(--subtle);
         font-size: 0.8rem;
         line-height: 1.45;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        overflow-wrap: anywhere;
       }
 
       .pipeline-node-pills {
@@ -623,7 +628,9 @@ const appHtmlTemplate = `<!DOCTYPE html>
         color: var(--muted);
         font-size: 0.76rem;
         line-height: 1.45;
-        word-break: break-word;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
       .indicator {
@@ -847,6 +854,11 @@ const appHtmlTemplate = `<!DOCTYPE html>
         color: var(--subtle);
         font-size: 0.84rem;
         line-height: 1.5;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        overflow-wrap: anywhere;
       }
 
       .status-accent {
@@ -1032,6 +1044,18 @@ const appHtmlTemplate = `<!DOCTYPE html>
         return value.replace(/_/g, " ").replace(/\\b\\w/g, function (match) {
           return match.toUpperCase();
         });
+      }
+
+      function shortDetail(value, limit) {
+        if (!value) {
+          return "";
+        }
+        const oneLine = value.replace(/\\s+/g, " ").trim();
+        const max = typeof limit === "number" ? limit : 120;
+        if (oneLine.length <= max) {
+          return oneLine;
+        }
+        return oneLine.slice(0, Math.max(0, max - 1)).trimEnd() + "\u2026";
       }
 
       function formatTime(value) {
@@ -1443,7 +1467,7 @@ const appHtmlTemplate = `<!DOCTYPE html>
               </div>
             </div>
             <h4 className="pipeline-node-title">{step.label}</h4>
-            <p className="pipeline-node-detail">{step.detail || meta.helper}</p>
+            <p className="pipeline-node-detail" title={step.detail || meta.helper}>{shortDetail(step.detail || meta.helper, 120)}</p>
             {(step.startedAt || step.finishedAt || step.currentCommand) ? (
               <div className="pipeline-node-pills">
                 {step.startedAt ? <span className="pipeline-pill">Started {formatTime(step.startedAt)}</span> : null}
@@ -1454,7 +1478,7 @@ const appHtmlTemplate = `<!DOCTYPE html>
             {step.output && step.output.length ? (
               <ul className="pipeline-node-output">
                 {step.output.slice(0, 2).map(function (line, outputIndex) {
-                  return <li key={step.id + "-output-" + outputIndex}>{line}</li>;
+                  return <li key={step.id + "-output-" + outputIndex} title={line}>{shortDetail(line, 80)}</li>;
                 })}
               </ul>
             ) : null}
@@ -1597,8 +1621,8 @@ const appHtmlTemplate = `<!DOCTYPE html>
                       </a>
                       <span className="ticket-summary">{ticket.summary}</span>
                     </div>
-                    <div className="ticket-detail">
-                      {ticket.detail || prettyStatus(ticket.status)}
+                    <div className="ticket-detail" title={ticket.detail || prettyStatus(ticket.status)}>
+                      {shortDetail(ticket.detail || prettyStatus(ticket.status), 140)}
                     </div>
                   </div>
                 </div>

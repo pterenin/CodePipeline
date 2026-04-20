@@ -70,7 +70,11 @@ function buildMockSnapshot(): WorkerRunSnapshot {
       status: "completed",
       detail: "Worktree ready on ai/proj-101-refactor-auth"
     },
-    document_context: { status: "completed", detail: "Updated docs/tickets/PROJ-101.md" },
+    document_context: {
+      status: "completed",
+      detail:
+        "Refreshed docs/tickets/PROJ-101.md and created docs/tickets/PROJ-101.visual-plan.json. The markdown now captures the ticket summary and acceptance criteria, the human comment and local Jira assets, the matching repo surfaces, a phased implementation plan, and the remaining risks and open decisions."
+    },
     implement_changes: {
       status: "running",
       detail: "Codex implementation pass",
