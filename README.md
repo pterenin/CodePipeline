@@ -116,6 +116,9 @@ curl -X POST "http://localhost:3000/run-next?dryRun=true"
 - `OPENAI_API_KEY`: API key available to the Codex CLI run
 - `OPENAI_MODEL`: Model passed to Codex CLI
 - `CODEX_CLI_PATH`: Path to the `codex` executable
+- `GUARDRAIL_HARD_BLOCKED_KEYWORDS`: Optional JSON array or comma/newline-separated list of truly unsafe keywords or phrases; set it blank to disable keyword hard blocks
+- `GUARDRAIL_SCAN_HUMAN_COMMENTS`: When `true`, Jira human comments are included in keyword hard-block scanning
+- `GUARDRAIL_WEAK_REQUIREMENT_THRESHOLD`: Minimum requirement-strength score before a ticket is skipped as underspecified
 - `VALIDATION_COMMANDS`: Optional JSON array or newline-separated list of validation commands to run inside the target repository
 - `VALIDATION_REPAIR_ATTEMPTS`: Max number of automated repair attempts after validation failures
 - `DRY_RUN_BY_DEFAULT`: When `true`, runs stop before commit/push, PR creation, and Jira mutations unless explicitly overridden
@@ -161,7 +164,8 @@ Requests that the active run stop at the next safe interruption point.
 ## Worker Flow
 
 1. Load queued Jira tickets.
-2. Apply automation guardrails.
+2. Apply automation guardrails:
+   configurable hard-block keywords plus a minimum requirements-strength check.
 3. Refresh the persistent mirror and create a fresh worktree.
 4. Create a branch named `ai/<ticket>-<slug>`.
 5. Run a Codex context pass and refresh `docs/tickets/<ticket>.md`.

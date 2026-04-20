@@ -10,6 +10,20 @@ const DEFAULT_VALIDATION_COMMANDS = [
   "npm run test"
 ] as const;
 
+const DEFAULT_HARD_BLOCKED_KEYWORDS = [
+  "api key",
+  "secret",
+  "private key",
+  "token rotation",
+  "database migration",
+  "schema migration",
+  "data backfill",
+  "infrastructure migration",
+  "terraform",
+  "kubernetes",
+  "helm"
+] as const;
+
 const configSchema = z
   .object({
     PORT: z.coerce.number().int().positive().default(3000),
@@ -36,6 +50,9 @@ const configSchema = z
     OPENAI_API_KEY: z.string().min(1),
     OPENAI_MODEL: z.string().min(1).default("gpt-5.4"),
     CODEX_CLI_PATH: z.string().min(1).default("codex"),
+    GUARDRAIL_HARD_BLOCKED_KEYWORDS: z.string().trim().optional(),
+    GUARDRAIL_SCAN_HUMAN_COMMENTS: z.stringbool().default(false),
+    GUARDRAIL_WEAK_REQUIREMENT_THRESHOLD: z.coerce.number().int().positive().default(20),
     VALIDATION_COMMANDS: z.string().trim().optional(),
     VALIDATION_REPAIR_ATTEMPTS: z.coerce.number().int().positive().default(5),
     DRY_RUN_BY_DEFAULT: z.stringbool().default(false),
@@ -61,12 +78,22 @@ if (!parsed.success) {
 }
 
 let validationCommands: string[];
+let hardBlockedKeywords: string[];
 
 try {
   validationCommands = parseValidationCommands(parsed.data.VALIDATION_COMMANDS);
 } catch (error) {
   console.error("Invalid environment configuration", {
     VALIDATION_COMMANDS: [error instanceof Error ? error.message : String(error)]
+  });
+  process.exit(1);
+}
+
+try {
+  hardBlockedKeywords = parseKeywordList(parsed.data.GUARDRAIL_HARD_BLOCKED_KEYWORDS);
+} catch (error) {
+  console.error("Invalid environment configuration", {
+    GUARDRAIL_HARD_BLOCKED_KEYWORDS: [error instanceof Error ? error.message : String(error)]
   });
   process.exit(1);
 }
@@ -78,9 +105,9 @@ export const config = {
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean),
-  hardBlockedKeywordPattern:
-    /\b(api[ -]?keys?|secrets?|private keys?|token rotation|database migrations?|schema migrations?|data backfills?|infrastructure migrations?|terraform|kubernetes|helm|deploy(?:ment|ments)?|ci\/cd|github actions|billing|payment)\b/i,
-  weakRequirementThreshold: 20
+  hardBlockedKeywords,
+  scanHumanCommentsInGuardrails: parsed.data.GUARDRAIL_SCAN_HUMAN_COMMENTS,
+  weakRequirementThreshold: parsed.data.GUARDRAIL_WEAK_REQUIREMENT_THRESHOLD
 };
 
 export type AppConfig = typeof config;
@@ -119,4 +146,31 @@ function parseValidationCommands(value?: string): string[] {
   }
 
   return commands;
+}
+
+function parseKeywordList(value?: string): string[] {
+  if (value === undefined) {
+    return [...DEFAULT_HARD_BLOCKED_KEYWORDS];
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  if (trimmed.startsWith("[")) {
+    const parsedJson = JSON.parse(trimmed);
+    if (!Array.isArray(parsedJson)) {
+      throw new Error("GUARDRAIL_HARD_BLOCKED_KEYWORDS must be a JSON array of strings.");
+    }
+
+    return parsedJson
+      .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+      .filter(Boolean);
+  }
+
+  return trimmed
+    .split(/[\r\n,]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
 }
