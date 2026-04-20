@@ -1,16 +1,23 @@
 # CodePipeline
 
+> Cautious, human-reviewed automation from Jira ticket to draft pull request — not an autonomous merge bot.
+
 CodePipeline is an experimental self-hosted Node.js + TypeScript service that pulls one Jira issue at a time from a queue, prepares an isolated git worktree for a target repository, runs Codex CLI against that repository, validates the result, and then opens a draft GitHub pull request or optionally commits directly to a non-`main` base branch.
 
 It is built for cautious human-reviewed automation rather than fully autonomous delivery.
+
+![CodePipeline dashboard](docs/screenshots/dashboard.png)
 
 ## Status
 
 - Beta and intentionally conservative
 - Single worker process, single target repository, in-memory run state
 - Best fit for teams that already use Jira, GitHub, npm-based repositories, and Codex CLI
-- Open-source readiness work is tracked in [OPEN_SOURCE_PLAN.md](./OPEN_SOURCE_PLAN.md)
-- Docker and history-cleanup guidance live under [docs/](./docs)
+- Roadmap: [docs/ROADMAP.md](./docs/ROADMAP.md)
+- Release notes: [CHANGELOG.md](./CHANGELOG.md)
+- Docker, history cleanup, and troubleshooting live under [docs/](./docs)
+
+The `package.json` is marked `"private": true` on purpose — CodePipeline is meant to be cloned and run as a self-hosted service, not published to the npm registry.
 
 ## What It Does
 
@@ -193,6 +200,7 @@ In dry-run mode, steps 11 through 13 are skipped after successful local validati
 ## Deployment
 
 - Docker and Compose setup: [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md)
+- Recovery and stale-worktree cleanup: [docs/TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md)
 - Git history cleanup guidance before public launch: [docs/HISTORY_CLEANUP.md](./docs/HISTORY_CLEANUP.md)
 - Secret scanning runs in GitHub Actions via [`.github/workflows/secret-scan.yml`](./.github/workflows/secret-scan.yml)
 
@@ -208,8 +216,22 @@ Please read [CONTRIBUTING.md](./CONTRIBUTING.md), [SECURITY.md](./SECURITY.md), 
 
 ## Local Checks
 
-Run the repo checks with:
+Run typecheck, build, and tests with:
 
 ```bash
 npm run check
+```
+
+Or run tests on their own:
+
+```bash
+npm test
+```
+
+To regenerate the dashboard screenshot after UI changes (requires Chromium):
+
+```bash
+npm run build:dashboard
+npm run playwright:install
+npx tsx scripts/capture-dashboard.ts
 ```

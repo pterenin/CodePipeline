@@ -1,6 +1,6 @@
-# Open Source Plan
+# Roadmap
 
-This document tracks the work needed to make CodePipeline a healthy public repository that other teams can evaluate, run, and contribute to safely.
+This document tracks the work needed to make CodePipeline a healthy public repository that other teams can evaluate, run, and contribute to safely. It is updated as phases land; completed items are kept for historical context.
 
 ## Goals
 
