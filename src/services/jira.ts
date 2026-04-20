@@ -153,7 +153,9 @@ export class JiraService {
     this.logger.info(`Attempting Jira transition for ${ticketKey}`, {
       targetStatus: this.config.JIRA_REVIEW_TRANSITION_NAME
     });
-    const response = await this.client.get<JiraTransitionsResponse>(`/rest/api/3/issue/${ticketKey}/transitions`);
+    const response = await this.client.get<JiraTransitionsResponse>(
+      `/rest/api/3/issue/${ticketKey}/transitions`
+    );
     const targetStatus = this.config.JIRA_REVIEW_TRANSITION_NAME.toLowerCase();
     const reviewTransition = response.data.transitions.find((transition) => {
       const transitionName = transition.name.toLowerCase();
@@ -181,11 +183,14 @@ export class JiraService {
   private async getHumanComments(ticketKey: string): Promise<string[]> {
     this.logger.info(`Fetching Jira comments for ${ticketKey}`);
 
-    const response = await this.client.get<JiraCommentResponse>(`/rest/api/3/issue/${ticketKey}/comment`, {
-      params: {
-        maxResults: 50
+    const response = await this.client.get<JiraCommentResponse>(
+      `/rest/api/3/issue/${ticketKey}/comment`,
+      {
+        params: {
+          maxResults: 50
+        }
       }
-    });
+    );
 
     return response.data.comments
       .map((comment) => normalizeWhitespace(extractPlainText(comment.body)))
@@ -332,7 +337,9 @@ function extractPlainText(value: unknown): string {
   return parts.join("\n");
 }
 
-function extractImageAttachments(value: JiraSearchResponse["issues"][number]["fields"]["attachment"]): JiraImageAttachment[] {
+function extractImageAttachments(
+  value: JiraSearchResponse["issues"][number]["fields"]["attachment"]
+): JiraImageAttachment[] {
   if (!Array.isArray(value)) {
     return [];
   }
@@ -348,7 +355,9 @@ function extractImageAttachments(value: JiraSearchResponse["issues"][number]["fi
     .filter((attachment) => Boolean(attachment.contentUrl));
 }
 
-function extractHtmlAttachments(value: JiraSearchResponse["issues"][number]["fields"]["attachment"]): JiraHtmlAttachment[] {
+function extractHtmlAttachments(
+  value: JiraSearchResponse["issues"][number]["fields"]["attachment"]
+): JiraHtmlAttachment[] {
   if (!Array.isArray(value)) {
     return [];
   }

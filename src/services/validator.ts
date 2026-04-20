@@ -13,7 +13,7 @@ export class ValidatorService {
     hooks?: {
       onCommandStart?: (command: string) => void;
       signal?: AbortSignal;
-    },
+    }
   ): Promise<ValidationResult> {
     this.logger.info("Starting validation run", {
       repoPath,
@@ -23,7 +23,7 @@ export class ValidatorService {
 
     for (const commandLabel of this.commands) {
       this.logger.info("Running validation command", {
-        command: commandLabel,
+        command: commandLabel
       });
       hooks?.onCommandStart?.(commandLabel);
       try {
@@ -32,7 +32,7 @@ export class ValidatorService {
           shell: true,
           reject: false,
           all: false,
-          ...(hooks?.signal ? { cancelSignal: hooks.signal } : {}),
+          ...(hooks?.signal ? { cancelSignal: hooks.signal } : {})
         });
 
         const step: ValidationStepResult = {
@@ -40,7 +40,7 @@ export class ValidatorService {
           success: result.exitCode === 0,
           exitCode: result.exitCode ?? null,
           stdout: result.stdout,
-          stderr: result.stderr,
+          stderr: result.stderr
         };
 
         steps.push(step);
@@ -48,12 +48,12 @@ export class ValidatorService {
         this.logger.info("Validation command completed", {
           command: step.command,
           success: step.success,
-          exitCode: step.exitCode,
+          exitCode: step.exitCode
         });
 
         if (!step.success) {
           this.logger.warn("Validation run stopped on failed command", {
-            command: step.command,
+            command: step.command
           });
           return { success: false, steps };
         }
@@ -61,14 +61,14 @@ export class ValidatorService {
         const message = error instanceof Error ? error.message : String(error);
         this.logger.error("Validation command threw an unexpected error", {
           command: commandLabel,
-          message,
+          message
         });
         steps.push({
           command: commandLabel,
           success: false,
           exitCode: 1,
           stdout: "",
-          stderr: message,
+          stderr: message
         });
         return { success: false, steps };
       }

@@ -12,71 +12,81 @@ import type { AppConfig } from "../config.js";
 import type { JiraTicket, VisualReviewResult } from "../types.js";
 import { Logger } from "../utils/logger.js";
 
-const visualReviewTargetSchema = z.object({
-  type: z.enum(["file", "url"]),
-  path: z.string().trim().optional(),
-  url: z.string().trim().optional(),
-  readySelector: z.string().trim().optional(),
-  screenshotSelector: z.string().trim().optional(),
-  delayMs: z.coerce.number().int().nonnegative().optional(),
-}).superRefine((value, context) => {
-  if (value.type === "file" && !value.path) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["path"],
-      message: "Set path when target type is file.",
-    });
-  }
+const visualReviewTargetSchema = z
+  .object({
+    type: z.enum(["file", "url"]),
+    path: z.string().trim().optional(),
+    url: z.string().trim().optional(),
+    readySelector: z.string().trim().optional(),
+    screenshotSelector: z.string().trim().optional(),
+    delayMs: z.coerce.number().int().nonnegative().optional()
+  })
+  .superRefine((value, context) => {
+    if (value.type === "file" && !value.path) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["path"],
+        message: "Set path when target type is file."
+      });
+    }
 
-  if (value.type === "url" && !value.url) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["url"],
-      message: "Set url when target type is url.",
-    });
-  }
-});
+    if (value.type === "url" && !value.url) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["url"],
+        message: "Set url when target type is url."
+      });
+    }
+  });
 
-const visualReviewPlanSchema = z.object({
-  enabled: z.boolean().default(false),
-  reason: z.string().trim().optional(),
-  viewport: z.object({
-    width: z.coerce.number().int().positive().max(4000).default(1440),
-    height: z.coerce.number().int().positive().max(4000).default(1024),
-  }).default({
-    width: 1440,
-    height: 1024,
-  }),
-  fullPage: z.boolean().default(true),
-  example: visualReviewTargetSchema.optional(),
-  implementation: visualReviewTargetSchema.extend({
-    startCommand: z.string().trim().optional(),
-    workingDirectory: z.string().trim().optional(),
-    startupTimeoutMs: z.coerce.number().int().positive().optional(),
-  }).optional(),
-  diff: z.object({
-    maxDiffRatio: z.coerce.number().min(0).max(1).default(0.03),
-    maxDiffPixels: z.coerce.number().int().positive().optional(),
-  }).default({
-    maxDiffRatio: 0.03,
-  }),
-}).superRefine((value, context) => {
-  if (value.enabled && !value.example) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["example"],
-      message: "Set example when visual review is enabled.",
-    });
-  }
+const visualReviewPlanSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    reason: z.string().trim().optional(),
+    viewport: z
+      .object({
+        width: z.coerce.number().int().positive().max(4000).default(1440),
+        height: z.coerce.number().int().positive().max(4000).default(1024)
+      })
+      .default({
+        width: 1440,
+        height: 1024
+      }),
+    fullPage: z.boolean().default(true),
+    example: visualReviewTargetSchema.optional(),
+    implementation: visualReviewTargetSchema
+      .extend({
+        startCommand: z.string().trim().optional(),
+        workingDirectory: z.string().trim().optional(),
+        startupTimeoutMs: z.coerce.number().int().positive().optional()
+      })
+      .optional(),
+    diff: z
+      .object({
+        maxDiffRatio: z.coerce.number().min(0).max(1).default(0.03),
+        maxDiffPixels: z.coerce.number().int().positive().optional()
+      })
+      .default({
+        maxDiffRatio: 0.03
+      })
+  })
+  .superRefine((value, context) => {
+    if (value.enabled && !value.example) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["example"],
+        message: "Set example when visual review is enabled."
+      });
+    }
 
-  if (value.enabled && !value.implementation) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["implementation"],
-      message: "Set implementation when visual review is enabled.",
-    });
-  }
-});
+    if (value.enabled && !value.implementation) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["implementation"],
+        message: "Set implementation when visual review is enabled."
+      });
+    }
+  });
 
 type VisualReviewPlan = z.infer<typeof visualReviewPlanSchema>;
 type VisualReviewTarget = z.infer<typeof visualReviewTargetSchema>;
@@ -93,7 +103,7 @@ export class VisualReviewService {
     private readonly config: Pick<
       AppConfig,
       "VISUAL_REVIEW_ENABLED" | "VISUAL_REVIEW_TIMEOUT_MS" | "VISUAL_REVIEW_STARTUP_TIMEOUT_MS"
-    >,
+    >
   ) {}
 
   async run(
@@ -102,7 +112,7 @@ export class VisualReviewService {
     hooks?: {
       signal?: AbortSignal;
       onProgress?: (message: string) => void;
-    },
+    }
   ): Promise<VisualReviewResult> {
     const planPath = buildVisualReviewPlanPath(ticket.key);
     const reportPath = buildVisualReviewReportPath(ticket.key);
@@ -120,51 +130,53 @@ export class VisualReviewService {
         summary,
         findings: [],
         planPath,
-        artifactPaths: [],
+        artifactPaths: []
       });
       return {
         decision: "skipped",
         summary,
         findings: [],
         reportPath,
-        artifactPaths: [],
+        artifactPaths: []
       };
     }
 
     const plan = await this.loadPlan(repoPath, planPath);
     if (!plan) {
-      const summary = "No visual review plan was created for this ticket, so browser comparison was skipped.";
+      const summary =
+        "No visual review plan was created for this ticket, so browser comparison was skipped.";
       await this.writeReport(reportFullPath, {
         decision: "skipped",
         summary,
         findings: [],
         planPath,
-        artifactPaths: [],
+        artifactPaths: []
       });
       return {
         decision: "skipped",
         summary,
         findings: [],
         reportPath,
-        artifactPaths: [],
+        artifactPaths: []
       };
     }
 
     if (!plan.enabled) {
-      const summary = plan.reason || "Visual review plan exists but explicitly disables automated comparison.";
+      const summary =
+        plan.reason || "Visual review plan exists but explicitly disables automated comparison.";
       await this.writeReport(reportFullPath, {
         decision: "skipped",
         summary,
         findings: [],
         planPath,
-        artifactPaths: [],
+        artifactPaths: []
       });
       return {
         decision: "skipped",
         summary,
         findings: [],
         reportPath,
-        artifactPaths: [],
+        artifactPaths: []
       };
     }
 
@@ -174,7 +186,9 @@ export class VisualReviewService {
       const exampleTarget = plan.example;
       const implementationTarget = plan.implementation;
       if (!exampleTarget || !implementationTarget) {
-        throw new Error("Visual review plan is enabled but example or implementation target is missing.");
+        throw new Error(
+          "Visual review plan is enabled but example or implementation target is missing."
+        );
       }
 
       if (implementationTarget.startCommand) {
@@ -187,7 +201,7 @@ export class VisualReviewService {
         implementationUrl,
         previewProcess,
         implementationTarget.startupTimeoutMs ?? this.config.VISUAL_REVIEW_STARTUP_TIMEOUT_MS,
-        hooks?.signal,
+        hooks?.signal
       );
 
       const browser = await chromium.launch({ headless: true });
@@ -204,7 +218,7 @@ export class VisualReviewService {
           outputPath: exampleScreenshotPath,
           viewport: plan.viewport,
           fullPage: plan.fullPage,
-          ...(hooks?.signal ? { signal: hooks.signal } : {}),
+          ...(hooks?.signal ? { signal: hooks.signal } : {})
         });
 
         hooks?.onProgress?.("Capturing implementation screenshot in an isolated browser context.");
@@ -215,37 +229,34 @@ export class VisualReviewService {
           outputPath: implementationScreenshotPath,
           viewport: plan.viewport,
           fullPage: plan.fullPage,
-          ...(hooks?.signal ? { signal: hooks.signal } : {}),
+          ...(hooks?.signal ? { signal: hooks.signal } : {})
         });
 
         hooks?.onProgress?.("Comparing rendered screenshots.");
         const diff = await compareScreenshots(
           exampleScreenshotPath,
           implementationScreenshotPath,
-          diffScreenshotPath,
+          diffScreenshotPath
         );
 
         const findings: string[] = [];
         if (diff.dimensionMismatch) {
           findings.push(
-            `Screenshot dimensions differ: example ${diff.exampleSize.width}x${diff.exampleSize.height}, implementation ${diff.implementationSize.width}x${diff.implementationSize.height}.`,
+            `Screenshot dimensions differ: example ${diff.exampleSize.width}x${diff.exampleSize.height}, implementation ${diff.implementationSize.width}x${diff.implementationSize.height}.`
           );
         }
         if (diff.diffRatio > plan.diff.maxDiffRatio) {
           findings.push(
-            `Visual difference ratio ${formatRatio(diff.diffRatio)} exceeded the allowed threshold ${formatRatio(plan.diff.maxDiffRatio)}.`,
+            `Visual difference ratio ${formatRatio(diff.diffRatio)} exceeded the allowed threshold ${formatRatio(plan.diff.maxDiffRatio)}.`
           );
         }
         if (plan.diff.maxDiffPixels && diff.diffPixels > plan.diff.maxDiffPixels) {
           findings.push(
-            `Visual diff pixel count ${diff.diffPixels} exceeded the allowed threshold ${plan.diff.maxDiffPixels}.`,
+            `Visual diff pixel count ${diff.diffPixels} exceeded the allowed threshold ${plan.diff.maxDiffPixels}.`
           );
         }
 
-        const decision =
-          findings.length > 0
-            ? "needs_follow_up"
-            : "approved";
+        const decision = findings.length > 0 ? "needs_follow_up" : "approved";
         const summary =
           decision === "approved"
             ? `Visual review passed with diff ratio ${formatRatio(diff.diffRatio)}.`
@@ -253,7 +264,7 @@ export class VisualReviewService {
         const artifactPaths = [
           relativeToRepo(repoPath, exampleScreenshotPath),
           relativeToRepo(repoPath, implementationScreenshotPath),
-          relativeToRepo(repoPath, diffScreenshotPath),
+          relativeToRepo(repoPath, diffScreenshotPath)
         ];
 
         await this.writeReport(reportFullPath, {
@@ -262,7 +273,7 @@ export class VisualReviewService {
           findings,
           planPath,
           artifactPaths,
-          metrics: diff,
+          metrics: diff
         });
 
         return {
@@ -270,7 +281,7 @@ export class VisualReviewService {
           summary,
           findings,
           reportPath,
-          artifactPaths,
+          artifactPaths
         };
       } finally {
         await browser.close();
@@ -279,7 +290,7 @@ export class VisualReviewService {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn("Visual review failed", {
         ticketKey: ticket.key,
-        message,
+        message
       });
       await this.writeReport(reportFullPath, {
         decision: "needs_human_review",
@@ -287,7 +298,7 @@ export class VisualReviewService {
         findings: [],
         planPath,
         artifactPaths: [],
-        failureReason: message,
+        failureReason: message
       });
       return {
         decision: "needs_human_review",
@@ -295,7 +306,7 @@ export class VisualReviewService {
         findings: [],
         reportPath,
         artifactPaths: [],
-        reason: message,
+        reason: message
       };
     } finally {
       if (previewProcess && previewProcess.exitCode === null) {
@@ -314,7 +325,9 @@ export class VisualReviewService {
     const raw = await fs.readFile(fullPath, "utf8");
     const parsed = visualReviewPlanSchema.safeParse(JSON.parse(raw));
     if (!parsed.success) {
-      throw new Error(`Visual review plan is invalid: ${parsed.error.issues.map((issue) => issue.message).join("; ")}`);
+      throw new Error(
+        `Visual review plan is invalid: ${parsed.error.issues.map((issue) => issue.message).join("; ")}`
+      );
     }
 
     return parsed.data;
@@ -323,7 +336,7 @@ export class VisualReviewService {
   private startPreviewProcess(
     plan: VisualReviewPlan,
     repoPath: string,
-    signal?: AbortSignal,
+    signal?: AbortSignal
   ): PreviewProcess {
     const workingDirectory = plan.implementation?.workingDirectory
       ? path.resolve(repoPath, plan.implementation.workingDirectory)
@@ -337,8 +350,8 @@ export class VisualReviewService {
       ...(signal ? { cancelSignal: signal } : {}),
       env: {
         ...process.env,
-        CI: "1",
-      },
+        CI: "1"
+      }
     });
 
     return child as PreviewProcess;
@@ -348,7 +361,7 @@ export class VisualReviewService {
     implementationUrl: string,
     previewProcess: PreviewProcess | undefined,
     timeoutMs: number,
-    signal?: AbortSignal,
+    signal?: AbortSignal
   ): Promise<void> {
     if (!implementationUrl.startsWith("http://") && !implementationUrl.startsWith("https://")) {
       return;
@@ -358,7 +371,9 @@ export class VisualReviewService {
     let lastError = "";
     while (Date.now() < deadline) {
       if (signal?.aborted) {
-        throw signal.reason instanceof Error ? signal.reason : new Error("Visual review was aborted.");
+        throw signal.reason instanceof Error
+          ? signal.reason
+          : new Error("Visual review was aborted.");
       }
 
       if (previewProcess && previewProcess.exitCode !== null && previewProcess.exitCode !== 0) {
@@ -368,7 +383,7 @@ export class VisualReviewService {
       try {
         const response = await fetch(implementationUrl, {
           method: "GET",
-          ...(signal ? { signal } : {}),
+          ...(signal ? { signal } : {})
         });
         if (response.status < 500) {
           return;
@@ -394,7 +409,7 @@ export class VisualReviewService {
     signal?: AbortSignal;
   }): Promise<void> {
     const context = await input.browser.newContext({
-      viewport: input.viewport,
+      viewport: input.viewport
     });
 
     try {
@@ -402,13 +417,13 @@ export class VisualReviewService {
       const url = resolveTargetUrl(input.target, input.repoPath);
       await page.goto(url, {
         waitUntil: "load",
-        timeout: this.config.VISUAL_REVIEW_TIMEOUT_MS,
+        timeout: this.config.VISUAL_REVIEW_TIMEOUT_MS
       });
 
       if (input.target.readySelector) {
         await page.locator(input.target.readySelector).waitFor({
           state: "visible",
-          timeout: this.config.VISUAL_REVIEW_TIMEOUT_MS,
+          timeout: this.config.VISUAL_REVIEW_TIMEOUT_MS
         });
       }
 
@@ -417,19 +432,21 @@ export class VisualReviewService {
       }
 
       if (input.signal?.aborted) {
-        throw input.signal.reason instanceof Error ? input.signal.reason : new Error("Visual review was aborted.");
+        throw input.signal.reason instanceof Error
+          ? input.signal.reason
+          : new Error("Visual review was aborted.");
       }
 
       if (input.target.screenshotSelector) {
         await page.locator(input.target.screenshotSelector).screenshot({
-          path: input.outputPath,
+          path: input.outputPath
         });
         return;
       }
 
       await page.screenshot({
         path: input.outputPath,
-        fullPage: input.fullPage,
+        fullPage: input.fullPage
       });
     } finally {
       await context.close();
@@ -452,7 +469,7 @@ export class VisualReviewService {
         dimensionMismatch: boolean;
       };
       failureReason?: string;
-    },
+    }
   ): Promise<void> {
     const report = [
       "# Visual Review",
@@ -462,10 +479,14 @@ export class VisualReviewService {
       `Plan: ${input.planPath}`,
       "",
       "Findings:",
-      ...(input.findings.length > 0 ? input.findings.map((finding) => `- ${finding}`) : ["- None."]),
+      ...(input.findings.length > 0
+        ? input.findings.map((finding) => `- ${finding}`)
+        : ["- None."]),
       "",
       "Artifacts:",
-      ...(input.artifactPaths.length > 0 ? input.artifactPaths.map((artifactPath) => `- ${artifactPath}`) : ["- None."]),
+      ...(input.artifactPaths.length > 0
+        ? input.artifactPaths.map((artifactPath) => `- ${artifactPath}`)
+        : ["- None."]),
       "",
       "Metrics:",
       ...(input.metrics
@@ -474,17 +495,11 @@ export class VisualReviewService {
             `- Diff ratio: ${formatRatio(input.metrics.diffRatio)}`,
             `- Example size: ${input.metrics.exampleSize.width}x${input.metrics.exampleSize.height}`,
             `- Implementation size: ${input.metrics.implementationSize.width}x${input.metrics.implementationSize.height}`,
-            `- Dimension mismatch: ${input.metrics.dimensionMismatch ? "yes" : "no"}`,
+            `- Dimension mismatch: ${input.metrics.dimensionMismatch ? "yes" : "no"}`
           ]
         : ["- None."]),
-      ...(input.failureReason
-        ? [
-            "",
-            "Failure:",
-            `- ${input.failureReason}`,
-          ]
-        : []),
-      "",
+      ...(input.failureReason ? ["", "Failure:", `- ${input.failureReason}`] : []),
+      ""
     ].join("\n");
 
     await fs.writeFile(reportFullPath, report, "utf8");
@@ -502,7 +517,7 @@ function buildVisualReviewReportPath(ticketKey: string): string {
 function resolveTargetUrl(target: VisualReviewTarget, repoPath: string): string {
   if (target.type === "file") {
     const fullPath = path.isAbsolute(target.path ?? "")
-      ? target.path ?? ""
+      ? (target.path ?? "")
       : path.join(repoPath, target.path ?? "");
     return pathToFileURL(fullPath).href;
   }
@@ -513,7 +528,7 @@ function resolveTargetUrl(target: VisualReviewTarget, repoPath: string): string 
 async function compareScreenshots(
   examplePath: string,
   implementationPath: string,
-  diffPath: string,
+  diffPath: string
 ): Promise<{
   diffPixels: number;
   diffRatio: number;
@@ -536,8 +551,8 @@ async function compareScreenshots(
     width,
     height,
     {
-      threshold: 0.1,
-    },
+      threshold: 0.1
+    }
   );
 
   await fs.writeFile(diffPath, PNG.sync.write(diff));
@@ -547,13 +562,14 @@ async function compareScreenshots(
     diffRatio: diffPixels / Math.max(1, width * height),
     exampleSize: {
       width: example.width,
-      height: example.height,
+      height: example.height
     },
     implementationSize: {
       width: implementation.width,
-      height: implementation.height,
+      height: implementation.height
     },
-    dimensionMismatch: example.width !== implementation.width || example.height !== implementation.height,
+    dimensionMismatch:
+      example.width !== implementation.width || example.height !== implementation.height
   };
 }
 
@@ -570,14 +586,13 @@ function normalizePng(source: PNG, width: number, height: number): PNG {
 async function ensureGitExclude(repoPath: string, entry: string): Promise<void> {
   const gitDirResult = await execa("git", ["rev-parse", "--git-dir"], {
     cwd: repoPath,
-    reject: false,
+    reject: false
   });
-  const gitDir = gitDirResult.exitCode === 0 && gitDirResult.stdout.trim()
-    ? gitDirResult.stdout.trim()
-    : ".git";
+  const gitDir =
+    gitDirResult.exitCode === 0 && gitDirResult.stdout.trim() ? gitDirResult.stdout.trim() : ".git";
   const resolvedGitDir = path.isAbsolute(gitDir) ? gitDir : path.resolve(repoPath, gitDir);
   const gitInfoExclude = path.join(resolvedGitDir, "info", "exclude");
-  let current = "";
+  let current: string;
 
   try {
     current = await fs.readFile(gitInfoExclude, "utf8");
@@ -589,9 +604,7 @@ async function ensureGitExclude(repoPath: string, entry: string): Promise<void> 
     return;
   }
 
-  const next = current.trimEnd()
-    ? `${current.trimEnd()}\n${entry}\n`
-    : `${entry}\n`;
+  const next = current.trimEnd() ? `${current.trimEnd()}\n${entry}\n` : `${entry}\n`;
   await fs.mkdir(path.dirname(gitInfoExclude), { recursive: true });
   await fs.writeFile(gitInfoExclude, next, "utf8");
 }

@@ -44,7 +44,10 @@ async function main(): Promise<void> {
 
   try {
     const browser = await chromium.launch();
-    const context = await browser.newContext({ viewport: { width: 1520, height: 1080 }, deviceScaleFactor: 2 });
+    const context = await browser.newContext({
+      viewport: { width: 1520, height: 1080 },
+      deviceScaleFactor: 2
+    });
     const page = await context.newPage();
     await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector(".pipeline-canvas, .ticket-list", { timeout: 15000 });
@@ -63,7 +66,10 @@ function buildMockSnapshot(): WorkerRunSnapshot {
     fetch_ticket: { status: "completed", detail: "Loaded 3 tickets from queue" },
     evaluate_guardrails: { status: "completed", detail: "All tickets passed guardrails" },
     comment_start: { status: "completed", detail: "Posted start comment to PROJ-101" },
-    prepare_repository: { status: "completed", detail: "Worktree ready on ai/proj-101-refactor-auth" },
+    prepare_repository: {
+      status: "completed",
+      detail: "Worktree ready on ai/proj-101-refactor-auth"
+    },
     document_context: { status: "completed", detail: "Updated docs/tickets/PROJ-101.md" },
     implement_changes: {
       status: "running",
@@ -125,7 +131,11 @@ function buildMockSnapshot(): WorkerRunSnapshot {
     logs: [
       { timestamp: now.toISOString(), message: "Worker run started", stepId: "fetch_ticket" },
       { timestamp: now.toISOString(), message: "3 tickets queued", stepId: "fetch_ticket" },
-      { timestamp: now.toISOString(), message: "Guardrails accepted all 3 tickets", stepId: "evaluate_guardrails" },
+      {
+        timestamp: now.toISOString(),
+        message: "Guardrails accepted all 3 tickets",
+        stepId: "evaluate_guardrails"
+      },
       { timestamp: now.toISOString(), message: "Processing PROJ-101", stepId: "implement_changes" }
     ]
   };

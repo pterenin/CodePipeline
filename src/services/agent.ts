@@ -11,7 +11,7 @@ import type {
   AgentRunResult,
   ImplementationReviewResult,
   JiraTicket,
-  ValidationResult,
+  ValidationResult
 } from "../types.js";
 import { Logger } from "../utils/logger.js";
 import { truncate } from "../utils/text.js";
@@ -29,7 +29,7 @@ export class AgentService {
       signal?: AbortSignal;
     } & {
       reviewFindingsPath?: string;
-    },
+    }
   ): Promise<AgentRunResult> {
     hooks?.onProgress?.("Launching Codex CLI to implement the ticket from the documented context.");
     return this.runCodex({
@@ -37,7 +37,7 @@ export class AgentService {
       repoPath,
       mode: "implementation",
       ...(hooks?.reviewFindingsPath ? { reviewFindingsPath: hooks.reviewFindingsPath } : {}),
-      ...(hooks ? { hooks } : {}),
+      ...(hooks ? { hooks } : {})
     });
   }
 
@@ -47,14 +47,16 @@ export class AgentService {
     hooks?: {
       onProgress?: (message: string) => void;
       signal?: AbortSignal;
-    },
+    }
   ): Promise<AgentRunResult> {
-    hooks?.onProgress?.("Launching Codex CLI to analyze the ticket and refresh its markdown context file.");
+    hooks?.onProgress?.(
+      "Launching Codex CLI to analyze the ticket and refresh its markdown context file."
+    );
     return this.runCodex({
       ticket,
       repoPath,
       mode: "context",
-      ...(hooks ? { hooks } : {}),
+      ...(hooks ? { hooks } : {})
     });
   }
 
@@ -62,14 +64,14 @@ export class AgentService {
     ticket: JiraTicket,
     repoPath: string,
     validation: ValidationResult,
-    signal?: AbortSignal,
+    signal?: AbortSignal
   ): Promise<AgentRunResult> {
     return this.runCodex({
       ticket,
       repoPath,
       mode: "repair",
       validation,
-      ...(signal ? { signal } : {}),
+      ...(signal ? { signal } : {})
     });
   }
 
@@ -79,7 +81,7 @@ export class AgentService {
     hooks?: {
       onProgress?: (message: string) => void;
       signal?: AbortSignal;
-    },
+    }
   ): Promise<ImplementationReviewResult> {
     const reviewPath = buildImplementationReviewPath(ticket.key);
     hooks?.onProgress?.("Launching a fresh Codex review pass against the implemented ticket.");
@@ -88,7 +90,7 @@ export class AgentService {
       ticket,
       repoPath,
       mode: "review",
-      ...(hooks ? { hooks } : {}),
+      ...(hooks ? { hooks } : {})
     });
 
     if (run.decision === "needs_human_review") {
@@ -98,7 +100,7 @@ export class AgentService {
         findings: [],
         reviewPath,
         changedFiles: run.changedFiles,
-        ...(run.reason ? { reason: run.reason } : {}),
+        ...(run.reason ? { reason: run.reason } : {})
       };
     }
 
@@ -110,7 +112,7 @@ export class AgentService {
         findings: [],
         reviewPath,
         changedFiles: run.changedFiles,
-        reason: "Expected a structured review markdown file with a decision and findings.",
+        reason: "Expected a structured review markdown file with a decision and findings."
       };
     }
 
@@ -119,7 +121,7 @@ export class AgentService {
       summary: parsedReview.summary,
       findings: parsedReview.findings,
       reviewPath,
-      changedFiles: run.changedFiles,
+      changedFiles: run.changedFiles
     };
   }
 
@@ -148,7 +150,7 @@ export class AgentService {
       jiraImagePaths: jiraAssets.imagePaths,
       jiraHtmlExamplePaths: jiraAssets.htmlExamplePaths,
       inlineHtmlExamples: extractInlineHtmlExamples(input.ticket),
-      ...(jiraAssets.manifestPath ? { jiraAssetManifestPath: jiraAssets.manifestPath } : {}),
+      ...(jiraAssets.manifestPath ? { jiraAssetManifestPath: jiraAssets.manifestPath } : {})
     });
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-run-"));
     const outputPath = path.join(tempDir, "last-message.txt");
@@ -156,7 +158,7 @@ export class AgentService {
     this.logger.info("Running Codex CLI", {
       mode: input.mode,
       repoPath: input.repoPath,
-      model: this.config.OPENAI_MODEL,
+      model: this.config.OPENAI_MODEL
     });
 
     input.hooks?.onProgress?.(
@@ -181,7 +183,7 @@ export class AgentService {
           "--skip-git-repo-check",
           "--model",
           this.config.OPENAI_MODEL,
-          prompt,
+          prompt
         ],
         {
           cwd: input.repoPath,
@@ -189,9 +191,9 @@ export class AgentService {
           ...(signal ? { cancelSignal: signal } : {}),
           env: {
             ...process.env,
-            OPENAI_API_KEY: this.config.OPENAI_API_KEY,
-          },
-        },
+            OPENAI_API_KEY: this.config.OPENAI_API_KEY
+          }
+        }
       );
 
       const summary = await readSummary(outputPath, result.stdout, result.stderr);
@@ -200,52 +202,52 @@ export class AgentService {
       if (result.exitCode !== 0) {
         this.logger.warn("Codex CLI exited with a non-zero status", {
           mode: input.mode,
-          exitCode: result.exitCode,
+          exitCode: result.exitCode
         });
         return {
           decision: "needs_human_review",
           summary: "Codex CLI could not complete the task.",
           reason: truncate(
             [summary, result.stderr, result.stdout].filter(Boolean).join("\n\n"),
-            2000,
+            2000
           ),
-          changedFiles,
+          changedFiles
         };
       }
 
       if (changedFiles.length === 0) {
         this.logger.warn("Codex CLI completed without file changes", {
-          mode: input.mode,
+          mode: input.mode
         });
         return {
           decision: "no_changes",
           summary: summary || "Codex CLI reported completion without modifying files.",
           reason: "Codex CLI completed successfully but left no working tree changes.",
-          changedFiles,
+          changedFiles
         };
       }
 
       this.logger.info("Codex CLI applied changes", {
         mode: input.mode,
-        changedFiles,
+        changedFiles
       });
 
       return {
         decision: "applied",
         summary: summary || `Codex CLI completed the ${input.mode} pass.`,
-        changedFiles,
+        changedFiles
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error("Codex CLI invocation failed", {
         mode: input.mode,
-        message,
+        message
       });
       return {
         decision: "needs_human_review",
         summary: "Codex CLI could not be started.",
         reason: truncate(message, 2000),
-        changedFiles: await listChangedFiles(input.repoPath),
+        changedFiles: await listChangedFiles(input.repoPath)
       };
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
@@ -255,7 +257,7 @@ export class AgentService {
   private async prepareJiraAssets(
     ticket: JiraTicket,
     repoPath: string,
-    signal?: AbortSignal,
+    signal?: AbortSignal
   ): Promise<{ imagePaths: string[]; htmlExamplePaths: string[]; manifestPath?: string }> {
     const imageAttachments = ticket.imageAttachments ?? [];
     const htmlAttachments = ticket.htmlAttachments ?? [];
@@ -268,45 +270,52 @@ export class AgentService {
     await fs.mkdir(imageRoot, { recursive: true });
     await ensureGitExclude(repoPath, ".jira-assets/");
 
-    const imagePaths = (await Promise.all(
-      imageAttachments.map(async (attachment, index) => {
-        const sanitizedName = sanitizeFilename(attachment.filename, index);
-        const targetPath = path.join(imageRoot, sanitizedName);
+    const imagePaths = (
+      await Promise.all(
+        imageAttachments.map(async (attachment, index) => {
+          const sanitizedName = sanitizeFilename(attachment.filename, index);
+          const targetPath = path.join(imageRoot, sanitizedName);
 
-        try {
-          await this.downloadJiraAttachment(attachment.contentUrl, targetPath, signal);
-          return targetPath;
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          this.logger.warn("Failed to download Jira image attachment", {
-            ticketKey: ticket.key,
-            filename: attachment.filename,
-            message,
-          });
-          return "";
-        }
-      }),
-    )).filter(Boolean);
+          try {
+            await this.downloadJiraAttachment(attachment.contentUrl, targetPath, signal);
+            return targetPath;
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.logger.warn("Failed to download Jira image attachment", {
+              ticketKey: ticket.key,
+              filename: attachment.filename,
+              message
+            });
+            return "";
+          }
+        })
+      )
+    ).filter(Boolean);
 
-    const htmlExamplePaths = (await Promise.all(
-      htmlAttachments.map(async (attachment, index) => {
-        const sanitizedName = sanitizeFilename(attachment.filename, imageAttachments.length + index);
-        const targetPath = path.join(imageRoot, sanitizedName);
+    const htmlExamplePaths = (
+      await Promise.all(
+        htmlAttachments.map(async (attachment, index) => {
+          const sanitizedName = sanitizeFilename(
+            attachment.filename,
+            imageAttachments.length + index
+          );
+          const targetPath = path.join(imageRoot, sanitizedName);
 
-        try {
-          await this.downloadJiraAttachment(attachment.contentUrl, targetPath, signal);
-          return targetPath;
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          this.logger.warn("Failed to download Jira HTML attachment", {
-            ticketKey: ticket.key,
-            filename: attachment.filename,
-            message,
-          });
-          return "";
-        }
-      }),
-    )).filter(Boolean);
+          try {
+            await this.downloadJiraAttachment(attachment.contentUrl, targetPath, signal);
+            return targetPath;
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.logger.warn("Failed to download Jira HTML attachment", {
+              ticketKey: ticket.key,
+              filename: attachment.filename,
+              message
+            });
+            return "";
+          }
+        })
+      )
+    ).filter(Boolean);
 
     const manifestPath = path.join(imageRoot, "README.txt");
     const manifestBody = [
@@ -316,26 +325,28 @@ export class AgentService {
       "Open image files directly when visual context matters. Open HTML files directly when the ticket includes example markup.",
       "",
       "Image attachments:",
-      ...(imagePaths.length > 0 ? imagePaths.map((filePath, index) => `${index + 1}. ${filePath}`) : ["(none)"]),
+      ...(imagePaths.length > 0
+        ? imagePaths.map((filePath, index) => `${index + 1}. ${filePath}`)
+        : ["(none)"]),
       "",
       "HTML example attachments:",
       ...(htmlExamplePaths.length > 0
         ? htmlExamplePaths.map((filePath, index) => `${index + 1}. ${filePath}`)
-        : ["(none)"]),
+        : ["(none)"])
     ].join("\n");
     await fs.writeFile(manifestPath, manifestBody, "utf8");
 
     return {
       imagePaths,
       htmlExamplePaths,
-      manifestPath,
+      manifestPath
     };
   }
 
   private async downloadJiraAttachment(
     contentUrl: string,
     targetPath: string,
-    signal?: AbortSignal,
+    signal?: AbortSignal
   ): Promise<void> {
     if (await fileExists(targetPath)) {
       return;
@@ -346,9 +357,9 @@ export class AgentService {
       ...(signal ? { signal } : {}),
       auth: {
         username: this.config.JIRA_EMAIL,
-        password: this.config.JIRA_API_TOKEN,
+        password: this.config.JIRA_API_TOKEN
       },
-      timeout: 30000,
+      timeout: 30000
     });
 
     await fs.writeFile(targetPath, Buffer.from(new Uint8Array(response.data)));
@@ -373,16 +384,15 @@ function buildCodexPrompt(input: {
     ? [
         "",
         "Latest validation failures:",
-        ...input.validation.steps.map(
-          (step) =>
-            [
-              `COMMAND: ${step.command}`,
-              `SUCCESS: ${step.success}`,
-              `EXIT CODE: ${step.exitCode ?? "unknown"}`,
-              `STDOUT:\n${truncate(step.stdout, 4000) || "(empty)"}`,
-              `STDERR:\n${truncate(step.stderr, 4000) || "(empty)"}`,
-            ].join("\n"),
-        ),
+        ...input.validation.steps.map((step) =>
+          [
+            `COMMAND: ${step.command}`,
+            `SUCCESS: ${step.success}`,
+            `EXIT CODE: ${step.exitCode ?? "unknown"}`,
+            `STDOUT:\n${truncate(step.stdout, 4000) || "(empty)"}`,
+            `STDERR:\n${truncate(step.stderr, 4000) || "(empty)"}`
+          ].join("\n")
+        )
       ].join("\n\n")
     : "";
 
@@ -406,7 +416,7 @@ function buildCodexPrompt(input: {
           '  "diff": { "maxDiffRatio": 0.03, "maxDiffPixels": 12000 }',
           "}",
           "In this mode, only update documentation under docs/. Do not implement product code yet.",
-          "End with a short plain-text summary that mentions the ticket context markdown path you refreshed.",
+          "End with a short plain-text summary that mentions the ticket context markdown path you refreshed."
         ]
       : input.mode === "implementation"
         ? [
@@ -421,9 +431,9 @@ function buildCodexPrompt(input: {
             ...(input.reviewFindingsPath
               ? [
                   `Before editing, read and address the post-implementation review findings in: ${input.reviewFindingsPath}`,
-                  "Treat every finding in that review document as required follow-up work unless you can clearly justify why it should not change the code.",
+                  "Treat every finding in that review document as required follow-up work unless you can clearly justify why it should not change the code."
                 ]
-              : []),
+              : [])
           ]
         : input.mode === "review"
           ? [
@@ -446,17 +456,19 @@ function buildCodexPrompt(input: {
               "- finding 2",
               "",
               "Use `- None.` when there are no findings.",
-              "Only include findings that are actionable and grounded in the ticket or current implementation.",
-          ]
-        : [
-            "Re-read the ticket context markdown before repairing validation failures.",
-            `Ticket context markdown path: ${input.ticketContextPath}`,
-            `If it exists, read the visual review report before repairing: ${input.visualReviewReportPath}`,
-            "Keep the implementation aligned with the documented plan, reusable component strategy, and any HTML example constraints.",
-            ...(input.reviewFindingsPath
-              ? [`Also read the post-implementation review findings in: ${input.reviewFindingsPath}`]
-              : []),
-          ];
+              "Only include findings that are actionable and grounded in the ticket or current implementation."
+            ]
+          : [
+              "Re-read the ticket context markdown before repairing validation failures.",
+              `Ticket context markdown path: ${input.ticketContextPath}`,
+              `If it exists, read the visual review report before repairing: ${input.visualReviewReportPath}`,
+              "Keep the implementation aligned with the documented plan, reusable component strategy, and any HTML example constraints.",
+              ...(input.reviewFindingsPath
+                ? [
+                    `Also read the post-implementation review findings in: ${input.reviewFindingsPath}`
+                  ]
+                : [])
+            ];
 
   return [
     "You are Codex working inside a git worktree created for a single Jira ticket.",
@@ -490,21 +502,20 @@ function buildCodexPrompt(input: {
     "Before you finish:",
     "1. Verify the ticketed surface was actually edited or intentionally justified.",
     "2. Run focused checks when feasible.",
-    "3. Summarize the exact affected files and behavior.",
+    "3. Summarize the exact affected files and behavior."
   ].join("\n");
 }
 
 async function ensureGitExclude(repoPath: string, entry: string): Promise<void> {
   const gitDirResult = await execa("git", ["rev-parse", "--git-dir"], {
     cwd: repoPath,
-    reject: false,
+    reject: false
   });
-  const gitDir = gitDirResult.exitCode === 0 && gitDirResult.stdout.trim()
-    ? gitDirResult.stdout.trim()
-    : ".git";
+  const gitDir =
+    gitDirResult.exitCode === 0 && gitDirResult.stdout.trim() ? gitDirResult.stdout.trim() : ".git";
   const resolvedGitDir = path.isAbsolute(gitDir) ? gitDir : path.resolve(repoPath, gitDir);
   const excludePath = path.join(resolvedGitDir, "info", "exclude");
-  let current = "";
+  let current: string;
 
   try {
     current = await fs.readFile(excludePath, "utf8");
@@ -516,9 +527,7 @@ async function ensureGitExclude(repoPath: string, entry: string): Promise<void> 
     return;
   }
 
-  const next = current.trimEnd()
-    ? `${current.trimEnd()}\n${entry}\n`
-    : `${entry}\n`;
+  const next = current.trimEnd() ? `${current.trimEnd()}\n${entry}\n` : `${entry}\n`;
   await fs.mkdir(path.dirname(excludePath), { recursive: true });
   await fs.writeFile(excludePath, next, "utf8");
 }
@@ -542,16 +551,16 @@ function buildImplementationReviewPath(ticketKey: string): string {
 function sanitizeFilename(filename: string, index: number): string {
   const ext = path.extname(filename).slice(0, 10) || ".img";
   const basename = path.basename(filename, path.extname(filename)) || `image-${index + 1}`;
-  const safeBase = basename.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || `image-${index + 1}`;
+  const safeBase =
+    basename
+      .replace(/[^a-zA-Z0-9._-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60) || `image-${index + 1}`;
   const hash = createHash("sha1").update(filename).digest("hex").slice(0, 8);
   return `${safeBase}-${hash}${ext}`;
 }
 
-async function readSummary(
-  outputPath: string,
-  stdout: string,
-  stderr: string,
-): Promise<string> {
+async function readSummary(outputPath: string, stdout: string, stderr: string): Promise<string> {
   try {
     const content = (await fs.readFile(outputPath, "utf8")).trim();
     if (content) {
@@ -565,14 +574,10 @@ async function readSummary(
 }
 
 async function listChangedFiles(repoPath: string): Promise<string[]> {
-  const status = await execa(
-    "git",
-    ["status", "--short", "--untracked-files=all"],
-    {
-      cwd: repoPath,
-      reject: false,
-    },
-  );
+  const status = await execa("git", ["status", "--short", "--untracked-files=all"], {
+    cwd: repoPath,
+    reject: false
+  });
 
   if (status.exitCode !== 0 || !status.stdout.trim()) {
     return [];
@@ -618,8 +623,12 @@ async function fileExists(targetPath: string): Promise<boolean> {
 
 async function readImplementationReview(
   repoPath: string,
-  reviewPath: string,
-): Promise<{ decision: "approved" | "needs_follow_up"; summary: string; findings: string[] } | null> {
+  reviewPath: string
+): Promise<{
+  decision: "approved" | "needs_follow_up";
+  summary: string;
+  findings: string[];
+} | null> {
   const fullPath = path.join(repoPath, reviewPath);
   if (!(await fileExists(fullPath))) {
     return null;
@@ -651,6 +660,6 @@ async function readImplementationReview(
   return {
     decision: decision as "approved" | "needs_follow_up",
     summary: summary.trim(),
-    findings,
+    findings
   };
 }

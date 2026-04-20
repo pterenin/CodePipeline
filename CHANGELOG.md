@@ -23,11 +23,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Unit tests for text helpers and ticket guardrails
 - Troubleshooting guide covering stale worktrees and interrupted runs ([docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md))
 - Public roadmap ([docs/ROADMAP.md](docs/ROADMAP.md))
+- ESLint + Prettier tooling with a `npm run check` gate for typecheck, lint, format check, build, and tests
+- No-credential demo mode: `npm run demo` evaluates fixture tickets under `fixtures/tickets/` through the real guardrails
 
 ### Changed
 
 - Project renamed and unified under the public name `CodePipeline`
 - README and `.env.example` brought in sync with the current runtime configuration
+- Dropped `"private": true` from `package.json`; the repo is still distributed as source rather than a published npm package
+- One-time Prettier reformat across the codebase
 
 ### Removed
 

@@ -14,7 +14,10 @@ export class GitService {
 
   constructor(private readonly config: AppConfig) {}
 
-  async prepareRepository(ticketKey: string, summary: string): Promise<{
+  async prepareRepository(
+    ticketKey: string,
+    summary: string
+  ): Promise<{
     repoPath: string;
     branchName: string;
     git: SimpleGit;
@@ -156,7 +159,10 @@ export class GitService {
     });
   }
 
-  private async removeExistingBranchWorktree(mirrorPath: string, branchName: string): Promise<void> {
+  private async removeExistingBranchWorktree(
+    mirrorPath: string,
+    branchName: string
+  ): Promise<void> {
     await execa("git", ["worktree", "prune"], {
       cwd: mirrorPath,
       reject: false
@@ -207,19 +213,18 @@ export class GitService {
     }
 
     const defaultBranch = await this.resolveRemoteDefaultBranch(mirrorPath);
-    this.logger.warn("Configured base branch is missing on origin; creating it from remote default branch", {
-      baseBranch: branchName,
-      defaultBranch,
-      remote: this.config.GIT_REMOTE_URL
-    });
+    this.logger.warn(
+      "Configured base branch is missing on origin; creating it from remote default branch",
+      {
+        baseBranch: branchName,
+        defaultBranch,
+        remote: this.config.GIT_REMOTE_URL
+      }
+    );
 
     await execa(
       "git",
-      [
-        "push",
-        "origin",
-        `refs/remotes/origin/${defaultBranch}:refs/heads/${branchName}`
-      ],
+      ["push", "origin", `refs/remotes/origin/${defaultBranch}:refs/heads/${branchName}`],
       { cwd: mirrorPath }
     );
 

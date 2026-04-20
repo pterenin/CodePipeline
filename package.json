@@ -1,7 +1,6 @@
 {
   "name": "codepipeline",
   "version": "1.0.0",
-  "private": true,
   "description": "Self-hosted Jira-to-GitHub AI worker that prepares isolated worktrees, runs Codex CLI, and opens draft pull requests.",
   "license": "MIT",
   "homepage": "https://github.com/pterenin/CodePipeline#readme",
@@ -32,8 +31,12 @@
     "build:dashboard": "tsx scripts/build-dashboard.ts",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "demo": "tsx scripts/demo.ts",
     "test": "node --import tsx --test tests/**/*.test.ts",
-    "check": "npm run typecheck && npm run build && npm test",
+    "check": "npm run typecheck && npm run lint && npm run format:check && npm run build && npm test",
     "playwright:install": "playwright install chromium"
   },
   "dependencies": {
@@ -51,12 +54,17 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/express": "^5.0.6",
     "@types/node": "^25.5.0",
     "@types/pngjs": "^6.0.5",
     "concurrently": "^9.2.1",
     "esbuild": "^0.25.11",
+    "eslint": "^10.2.1",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.8.3",
     "tsx": "^4.21.0",
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.2",
+    "typescript-eslint": "^8.58.2"
   }
 }

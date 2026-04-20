@@ -3,17 +3,9 @@ import path from "node:path";
 
 import { execa } from "execa";
 
-import type {
-  RepositoryContext,
-  RepositoryContextFile,
-  RepositorySearchResult
-} from "../types.js";
+import type { RepositoryContext, RepositoryContextFile, RepositorySearchResult } from "../types.js";
 
-const DEFAULT_CANDIDATE_FILES = [
-  "package.json",
-  "tsconfig.json",
-  "README.md"
-];
+const DEFAULT_CANDIDATE_FILES = ["package.json", "tsconfig.json", "README.md"];
 
 export async function ensureCleanDirectory(targetPath: string): Promise<void> {
   await fs.rm(targetPath, { recursive: true, force: true });
@@ -54,14 +46,17 @@ export async function loadFilesByPath(
   maxFiles: number,
   maxBytesPerFile: number
 ): Promise<RepositoryContextFile[]> {
-  const uniquePaths = Array.from(new Set(filePaths.map(normalizeRelativePath).filter(Boolean))).slice(
-    0,
-    maxFiles
-  );
+  const uniquePaths = Array.from(
+    new Set(filePaths.map(normalizeRelativePath).filter(Boolean))
+  ).slice(0, maxFiles);
   const loaded: RepositoryContextFile[] = [];
 
   for (const relativePath of uniquePaths) {
-    if (shouldSkipFile(relativePath) || shouldSkipDirectory(relativePath) || relativePath.startsWith(".git/")) {
+    if (
+      shouldSkipFile(relativePath) ||
+      shouldSkipDirectory(relativePath) ||
+      relativePath.startsWith(".git/")
+    ) {
       continue;
     }
 
@@ -139,7 +134,10 @@ async function listRepositoryFiles(repoPath: string): Promise<string[]> {
   return walkRepositoryFiles(repoPath, "");
 }
 
-async function walkRepositoryFiles(repoPath: string, currentRelativePath: string): Promise<string[]> {
+async function walkRepositoryFiles(
+  repoPath: string,
+  currentRelativePath: string
+): Promise<string[]> {
   const currentPath = path.join(repoPath, currentRelativePath);
   const entries = await fs.readdir(currentPath, { withFileTypes: true });
   const files: string[] = [];
@@ -178,7 +176,14 @@ async function searchRepository(
       continue;
     }
 
-    const pathMatches = await runRg(repoPath, ["--files", "--hidden", "-g", "!.git", "-g", `*${query}*`]);
+    const pathMatches = await runRg(repoPath, [
+      "--files",
+      "--hidden",
+      "-g",
+      "!.git",
+      "-g",
+      `*${query}*`
+    ]);
     const contentMatches = await runRg(repoPath, [
       "-l",
       "--hidden",
@@ -258,14 +263,7 @@ async function fileExists(filePath: string): Promise<boolean> {
 function shouldSkipDirectory(relativePath: string): boolean {
   const rootSegment = relativePath.split(path.sep)[0]?.split("/")[0] ?? "";
 
-  return [
-    "node_modules",
-    "dist",
-    "build",
-    "coverage",
-    ".next",
-    ".turbo"
-  ].includes(rootSegment);
+  return ["node_modules", "dist", "build", "coverage", ".next", ".turbo"].includes(rootSegment);
 }
 
 function shouldSkipFile(relativePath: string): boolean {
@@ -283,7 +281,11 @@ function shouldSkipFile(relativePath: string): boolean {
     return true;
   }
 
-  if (baseName.startsWith(".") && !DEFAULT_CANDIDATE_FILES.includes(normalizedPath) && normalizedPath !== ".env.example") {
+  if (
+    baseName.startsWith(".") &&
+    !DEFAULT_CANDIDATE_FILES.includes(normalizedPath) &&
+    normalizedPath !== ".env.example"
+  ) {
     return true;
   }
 
@@ -300,7 +302,11 @@ function scoreFilePath(filePath: string): number {
   if (filePath.startsWith("src/")) {
     score += 100;
   }
-  if (filePath.includes("/components/") || filePath.includes("/app/") || filePath.includes("/pages/")) {
+  if (
+    filePath.includes("/components/") ||
+    filePath.includes("/app/") ||
+    filePath.includes("/pages/")
+  ) {
     score += 40;
   }
   if (filePath.includes("__tests__") || /test|spec/i.test(filePath)) {

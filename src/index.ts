@@ -13,10 +13,7 @@ const app = express();
 const logger = new Logger("http");
 const worker = new Worker(config);
 const monitor = new RunMonitor();
-const assetDirectory = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "../dist/assets",
-);
+const assetDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../dist/assets");
 
 app.use(express.json());
 app.use("/assets", express.static(assetDirectory));
@@ -55,7 +52,7 @@ app.post("/api/run", (_request, response) => {
     logger.warn("Rejected UI run request because worker is already running");
     response.status(409).json({
       ok: false,
-      message: "A worker run is already in progress.",
+      message: "A worker run is already in progress."
     });
     return;
   }
@@ -69,7 +66,7 @@ app.post("/api/run", (_request, response) => {
         ? "Dry run started."
         : config.DRY_RUN_BY_DEFAULT
           ? "Worker run started using default dry-run mode."
-          : "Worker run started.",
+          : "Worker run started."
   });
 });
 
@@ -79,7 +76,7 @@ app.post("/api/run/dry-run", (_request, response) => {
     logger.warn("Rejected UI dry-run request because worker is already running");
     response.status(409).json({
       ok: false,
-      message: "A worker run is already in progress.",
+      message: "A worker run is already in progress."
     });
     return;
   }
@@ -87,7 +84,7 @@ app.post("/api/run/dry-run", (_request, response) => {
   void runTriggeredExecution("ui-dry-run", { dryRun: true });
   response.status(202).json({
     ok: true,
-    message: "Dry run started.",
+    message: "Dry run started."
   });
 });
 
@@ -96,7 +93,7 @@ app.post("/api/run/stop", (_request, response) => {
   if (!worker.running) {
     response.status(409).json({
       ok: false,
-      message: "No worker run is currently in progress.",
+      message: "No worker run is currently in progress."
     });
     return;
   }
@@ -104,7 +101,7 @@ app.post("/api/run/stop", (_request, response) => {
   worker.requestStop(monitor);
   response.status(202).json({
     ok: true,
-    message: "Stop request accepted.",
+    message: "Stop request accepted."
   });
 });
 
@@ -114,7 +111,7 @@ app.post("/run-next", async (_request, response) => {
     logger.warn("Rejected run-next request because worker is already running");
     response.status(409).json({
       ok: false,
-      message: "A worker run is already in progress.",
+      message: "A worker run is already in progress."
     });
     return;
   }
@@ -124,23 +121,21 @@ app.post("/run-next", async (_request, response) => {
     const result = await worker.runNext(monitor, { ...(dryRun !== undefined ? { dryRun } : {}) });
     logger.info("Completed run-next request", {
       status: result.status,
-      ticketKey: result.ticketKey,
+      ticketKey: result.ticketKey
     });
     response.status(result.ok ? 200 : 500).json(result);
   } catch (error) {
     logger.error("Unhandled error while running worker", error);
     response.status(500).json({
       ok: false,
-      message: error instanceof Error ? error.message : "Unknown worker error",
+      message: error instanceof Error ? error.message : "Unknown worker error"
     });
   }
 });
 
 app.listen(config.PORT, () => {
   logger.info(`Server listening on port ${config.PORT}`);
-  logger.info(
-    "Worker is trigger-only; use the UI or POST /run-next to start a run",
-  );
+  logger.info("Worker is trigger-only; use the UI or POST /run-next to start a run");
 });
 
 async function runTriggeredExecution(
@@ -159,7 +154,7 @@ async function runTriggeredExecution(
     logger.info("Triggered execution completed", {
       source,
       status: result.status,
-      ticketKey: result.ticketKey,
+      ticketKey: result.ticketKey
     });
   } catch (error) {
     logger.error("Triggered execution failed", error);

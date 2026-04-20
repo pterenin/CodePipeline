@@ -1,9 +1,11 @@
 export function slugify(input: string): string {
-  return input
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40) || "ticket";
+  return (
+    input
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40) || "ticket"
+  );
 }
 
 export function truncate(input: string, maxLength: number): string {
@@ -27,8 +29,7 @@ export function hasStrongRequirements(text: string, threshold: number): boolean 
   const sentenceCount = normalized.split(/[.!?](?:\s+|$)/).filter(Boolean).length;
   const bulletCount = normalized
     .split("\n")
-    .filter((line) => /^\s*(?:[-*]|\d+\.)\s+/.test(line))
-    .length;
+    .filter((line) => /^\s*(?:[-*]|\d+\.)\s+/.test(line)).length;
   const sectionSignalCount = [
     "acceptance criteria",
     "definition of done",
@@ -54,7 +55,7 @@ export function hasStrongRequirements(text: string, threshold: number): boolean 
 
 export function extractAcceptanceCriteria(description: string): string | undefined {
   const match = description.match(
-    /(?:acceptance criteria|acceptance criterias|definition of done)\s*[:\-]?\s*([\s\S]+)/i
+    /(?:acceptance criteria|acceptance criterias|definition of done)\s*[:-]?\s*([\s\S]+)/i
   );
 
   return match?.[1]?.trim();

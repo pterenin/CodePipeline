@@ -1,5 +1,10 @@
 import type { AppConfig } from "./config.js";
-import type { ImplementationReviewResult, JiraTicket, VisualReviewResult, WorkerRunResult } from "./types.js";
+import type {
+  ImplementationReviewResult,
+  JiraTicket,
+  VisualReviewResult,
+  WorkerRunResult
+} from "./types.js";
 import type { RunMonitor } from "./run-monitor.js";
 import { AgentService } from "./services/agent.js";
 import { GitService } from "./services/git.js";
@@ -51,7 +56,9 @@ export class Worker {
     this.stopRequested = true;
     this.abortController?.abort(new WorkerStoppedError());
     this.logger.warn("Stop requested for active worker run");
-    monitor?.markStopRequested("Stop requested. Halting the pipeline as soon as the current work is interrupted safely.");
+    monitor?.markStopRequested(
+      "Stop requested. Halting the pipeline as soon as the current work is interrupted safely."
+    );
     return true;
   }
 
@@ -68,7 +75,9 @@ export class Worker {
     monitor?.startRun();
     monitor?.log("Worker run started.");
     if (dryRun) {
-      monitor?.log("Dry run mode is enabled. Publish, PR creation, and Jira mutation steps will be skipped.");
+      monitor?.log(
+        "Dry run mode is enabled. Publish, PR creation, and Jira mutation steps will be skipped."
+      );
     }
 
     try {
@@ -164,18 +173,12 @@ export class Worker {
         monitor?.finishTicket(ticket.key, "failed", ticketResult.message);
       }
 
-      monitor?.log(
-        `Finished ticket ${ticket.key} with status ${ticketResult.status}.`,
-      );
+      monitor?.log(`Finished ticket ${ticket.key} with status ${ticketResult.status}.`);
     }
 
     const processedTickets = tickets.length;
     const resultStatus: WorkerRunResult["status"] =
-      processedTickets === 0
-        ? "no_ticket"
-        : failedTickets > 0
-          ? "failed"
-          : "success";
+      processedTickets === 0 ? "no_ticket" : failedTickets > 0 ? "failed" : "success";
 
     return {
       ok: failedTickets === 0,
@@ -211,17 +214,23 @@ export class Worker {
     const useDirectCommits = this.shouldUseDirectCommits();
 
     if (this.config.GIT_DIRECT_COMMITS && !useDirectCommits) {
-      this.logger.warn("Direct commits were requested but base branch is main; using PR flow instead", {
-        ticketKey: ticket.key,
-        baseBranch: this.config.GIT_BASE_BRANCH
-      });
+      this.logger.warn(
+        "Direct commits were requested but base branch is main; using PR flow instead",
+        {
+          ticketKey: ticket.key,
+          baseBranch: this.config.GIT_BASE_BRANCH
+        }
+      );
       monitor?.log(
         `Direct commits requested, but GIT_BASE_BRANCH=${this.config.GIT_BASE_BRANCH} is protected by policy. Using regular PR flow.`,
         "evaluate_guardrails"
       );
     }
 
-    monitor?.startStep("evaluate_guardrails", `Checking whether ${ticket.key} is safe to automate.`);
+    monitor?.startStep(
+      "evaluate_guardrails",
+      `Checking whether ${ticket.key} is safe to automate.`
+    );
     this.throwIfStopped();
     const guardrailFailure = this.evaluateGuardrails(ticket);
     if (guardrailFailure) {
@@ -231,7 +240,10 @@ export class Worker {
       });
       monitor?.skipStep("evaluate_guardrails", guardrailFailure);
       monitor?.log(`Ticket ${ticket.key} was skipped by guardrails.`, "evaluate_guardrails");
-      monitor?.skipStep("comment_start", "Jira comments are only posted after a draft PR is created.");
+      monitor?.skipStep(
+        "comment_start",
+        "Jira comments are only posted after a draft PR is created."
+      );
       monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
       return {
         ok: true,
@@ -243,19 +255,30 @@ export class Worker {
     }
     monitor?.completeStep("evaluate_guardrails", "Ticket passed automation guardrails.");
 
-    monitor?.skipStep("comment_start", "Jira comments are only posted after a draft PR is created.");
+    monitor?.skipStep(
+      "comment_start",
+      "Jira comments are only posted after a draft PR is created."
+    );
 
     this.throwIfStopped();
     this.logger.info("Preparing repository workspace", { ticketKey: ticket.key });
     monitor?.startStep("prepare_repository", "Creating isolated git worktree and branch.");
-    const { repoPath, branchName, git, cleanup } = await this.gitService.prepareRepository(ticket.key, ticket.summary);
+    const { repoPath, branchName, git, cleanup } = await this.gitService.prepareRepository(
+      ticket.key,
+      ticket.summary
+    );
     this.logger.info("Repository worktree prepared", { repoPath, branchName });
-    monitor?.completeStep("prepare_repository", `Worktree ready on branch ${branchName}.`, [repoPath]);
+    monitor?.completeStep("prepare_repository", `Worktree ready on branch ${branchName}.`, [
+      repoPath
+    ]);
 
     try {
       this.throwIfStopped();
       this.logger.info("Running agent ticket-context pass", { ticketKey: ticket.key });
-      monitor?.startStep("document_context", "Analyzing the ticket and refreshing the ticket context markdown.");
+      monitor?.startStep(
+        "document_context",
+        "Analyzing the ticket and refreshing the ticket context markdown."
+      );
       const contextRun = await this.agentService.documentTicketContext(ticket, repoPath, {
         onProgress: (message) => {
           monitor?.setStepDetail("document_context", message);
@@ -270,7 +293,10 @@ export class Worker {
           reason: message
         });
         monitor?.failStep("document_context", message, contextRun.changedFiles);
-        monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
+        monitor?.skipStep(
+          "finalize_jira",
+          "No Jira comment posted because no draft PR was created."
+        );
         return {
           ok: true,
           status: "needs_human_review",
@@ -288,7 +314,10 @@ export class Worker {
           reason: message
         });
         monitor?.failStep("document_context", message);
-        monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
+        monitor?.skipStep(
+          "finalize_jira",
+          "No Jira comment posted because no draft PR was created."
+        );
         return {
           ok: false,
           status: "failed",
@@ -305,7 +334,10 @@ export class Worker {
       );
 
       this.logger.info("Running agent implementation pass", { ticketKey: ticket.key });
-      monitor?.startStep("implement_changes", "Running the implementation agent from the documented ticket context.");
+      monitor?.startStep(
+        "implement_changes",
+        "Running the implementation agent from the documented ticket context."
+      );
       const initialAgentRun = await this.agentService.implementTicket(ticket, repoPath, {
         onProgress: (message) => {
           monitor?.setStepDetail("implement_changes", message);
@@ -320,7 +352,10 @@ export class Worker {
           reason: message
         });
         monitor?.failStep("implement_changes", message, initialAgentRun.changedFiles);
-        monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
+        monitor?.skipStep(
+          "finalize_jira",
+          "No Jira comment posted because no draft PR was created."
+        );
         return {
           ok: true,
           status: "needs_human_review",
@@ -338,7 +373,10 @@ export class Worker {
           reason: message
         });
         monitor?.failStep("implement_changes", message);
-        monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
+        monitor?.skipStep(
+          "finalize_jira",
+          "No Jira comment posted because no draft PR was created."
+        );
         return {
           ok: false,
           status: "failed",
@@ -355,7 +393,12 @@ export class Worker {
       );
       let implementationSummary = initialAgentRun.summary;
 
-      let visualReviewRun = await this.runVisualReview(ticket, repoPath, monitor, "Running isolated browser comparison against the HTML example.");
+      let visualReviewRun = await this.runVisualReview(
+        ticket,
+        repoPath,
+        monitor,
+        "Running isolated browser comparison against the HTML example."
+      );
       if (visualReviewRun.decision === "needs_human_review") {
         const message = visualReviewRun.reason ?? visualReviewRun.summary;
         this.logger.warn("Visual review requires human review", {
@@ -363,7 +406,10 @@ export class Worker {
           reason: message
         });
         monitor?.failStep("visual_review", message, summarizeVisualReview(visualReviewRun));
-        monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
+        monitor?.skipStep(
+          "finalize_jira",
+          "No Jira comment posted because no draft PR was created."
+        );
         return {
           ok: true,
           status: "needs_human_review",
@@ -375,7 +421,10 @@ export class Worker {
       }
 
       this.logger.info("Running fresh post-implementation review", { ticketKey: ticket.key });
-      monitor?.startStep("review_implementation", "Running a fresh review pass against the implemented ticket.");
+      monitor?.startStep(
+        "review_implementation",
+        "Running a fresh review pass against the implemented ticket."
+      );
       let reviewRun = await this.agentService.reviewTicketImplementation(ticket, repoPath, {
         onProgress: (message) => {
           monitor?.setStepDetail("review_implementation", message);
@@ -391,7 +440,10 @@ export class Worker {
           reason: message
         });
         monitor?.failStep("review_implementation", message, reviewRun.changedFiles);
-        monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
+        monitor?.skipStep(
+          "finalize_jira",
+          "No Jira comment posted because no draft PR was created."
+        );
         return {
           ok: true,
           status: "needs_human_review",
@@ -401,11 +453,7 @@ export class Worker {
         };
       }
 
-      monitor?.completeStep(
-        "review_implementation",
-        reviewRun.summary,
-        summarizeReview(reviewRun)
-      );
+      monitor?.completeStep("review_implementation", reviewRun.summary, summarizeReview(reviewRun));
 
       if (reviewRun.decision === "needs_follow_up") {
         const reviewMessage = `${reviewRun.summary} Addressing ${reviewRun.findings.length} review finding(s).`;
@@ -432,7 +480,10 @@ export class Worker {
             reason: message
           });
           monitor?.failStep("implement_changes", message, followUpRun.changedFiles);
-          monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
+          monitor?.skipStep(
+            "finalize_jira",
+            "No Jira comment posted because no draft PR was created."
+          );
           return {
             ok: true,
             status: "needs_human_review",
@@ -450,7 +501,10 @@ export class Worker {
             reason: message
           });
           monitor?.failStep("implement_changes", message);
-          monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
+          monitor?.skipStep(
+            "finalize_jira",
+            "No Jira comment posted because no draft PR was created."
+          );
           return {
             ok: false,
             status: "failed",
@@ -469,7 +523,12 @@ export class Worker {
         implementationSummary = `${implementationSummary}\nFollow-up: ${followUpRun.summary}`;
 
         if (visualReviewRun.decision !== "skipped") {
-          visualReviewRun = await this.runVisualReview(ticket, repoPath, monitor, "Re-running isolated browser comparison after follow-up changes.");
+          visualReviewRun = await this.runVisualReview(
+            ticket,
+            repoPath,
+            monitor,
+            "Re-running isolated browser comparison after follow-up changes."
+          );
           if (visualReviewRun.decision === "needs_human_review") {
             const message = visualReviewRun.reason ?? visualReviewRun.summary;
             this.logger.warn("Visual review after follow-up requires human review", {
@@ -477,7 +536,10 @@ export class Worker {
               reason: message
             });
             monitor?.failStep("visual_review", message, summarizeVisualReview(visualReviewRun));
-            monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
+            monitor?.skipStep(
+              "finalize_jira",
+              "No Jira comment posted because no draft PR was created."
+            );
             return {
               ok: true,
               status: "needs_human_review",
@@ -489,7 +551,10 @@ export class Worker {
           }
         }
 
-        monitor?.startStep("review_implementation", "Confirming the follow-up changes against the ticket.");
+        monitor?.startStep(
+          "review_implementation",
+          "Confirming the follow-up changes against the ticket."
+        );
         reviewRun = await this.agentService.reviewTicketImplementation(ticket, repoPath, {
           onProgress: (message) => {
             monitor?.setStepDetail("review_implementation", message);
@@ -505,7 +570,10 @@ export class Worker {
             reason: message
           });
           monitor?.failStep("review_implementation", message, reviewRun.changedFiles);
-          monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
+          monitor?.skipStep(
+            "finalize_jira",
+            "No Jira comment posted because no draft PR was created."
+          );
           return {
             ok: true,
             status: "needs_human_review",
@@ -524,13 +592,15 @@ export class Worker {
 
         if (reviewRun.decision === "needs_follow_up") {
           const message = `Post-implementation review still found unresolved ticket gaps after automated follow-up. See ${reviewRun.reviewPath}.`;
-
           if (this.config.bypassConfirmationReviewFollowUp) {
-            this.logger.warn("Confirmation review found unresolved findings, but bypass is enabled", {
-              ticketKey: ticket.key,
-              findings: reviewRun.findings,
-              dryRun
-            });
+            this.logger.warn(
+              "Confirmation review found unresolved findings, but bypass is enabled",
+              {
+                ticketKey: ticket.key,
+                findings: reviewRun.findings,
+                dryRun
+              }
+            );
             monitor?.log(
               dryRun
                 ? `Confirmation review still found unresolved follow-up items, but BYPASS_CONFIRMATION_REVIEW_FOLLOW_UP is enabled. Dry run mode would post a Jira warning comment and continue.`
@@ -550,7 +620,10 @@ export class Worker {
               findings: reviewRun.findings
             });
             monitor?.failStep("review_implementation", message, summarizeReview(reviewRun));
-            monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
+            monitor?.skipStep(
+              "finalize_jira",
+              "No Jira comment posted because no draft PR was created."
+            );
             return {
               ok: true,
               status: "needs_human_review",
@@ -566,7 +639,11 @@ export class Worker {
       this.logger.info("Running validation after implementation", { ticketKey: ticket.key });
       monitor?.startStep("validation", "Running repository validation commands.");
       let validation = await this.runValidationWithMonitor(repoPath, monitor);
-      for (let attempt = 1; !validation.success && attempt <= this.config.VALIDATION_REPAIR_ATTEMPTS; attempt += 1) {
+      for (
+        let attempt = 1;
+        !validation.success && attempt <= this.config.VALIDATION_REPAIR_ATTEMPTS;
+        attempt += 1
+      ) {
         this.throwIfStopped();
         this.logger.warn("Validation failed; starting automated repair attempt", {
           ticketKey: ticket.key,
@@ -578,7 +655,10 @@ export class Worker {
           `Validation failed on ${validation.steps[validation.steps.length - 1]?.command ?? "unknown step"}. Starting repair attempt ${attempt} of ${this.config.VALIDATION_REPAIR_ATTEMPTS}.`,
           "validation"
         );
-        monitor?.startStep("validation", `Repair attempt ${attempt} of ${this.config.VALIDATION_REPAIR_ATTEMPTS} is running.`);
+        monitor?.startStep(
+          "validation",
+          `Repair attempt ${attempt} of ${this.config.VALIDATION_REPAIR_ATTEMPTS} is running.`
+        );
 
         const repairRun = await this.agentService.repairFromValidation(
           ticket,
@@ -593,7 +673,10 @@ export class Worker {
             ticketKey: ticket.key,
             attempt
           });
-          monitor?.log(`Repair attempt ${attempt} applied changes. Rerunning validation.`, "validation");
+          monitor?.log(
+            `Repair attempt ${attempt} applied changes. Rerunning validation.`,
+            "validation"
+          );
           validation = await this.runValidationWithMonitor(repoPath, monitor);
           continue;
         }
@@ -606,7 +689,10 @@ export class Worker {
             reason: message
           });
           monitor?.failStep("validation", message, summarizeValidation(validation));
-          monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
+          monitor?.skipStep(
+            "finalize_jira",
+            "No Jira comment posted because no draft PR was created."
+          );
           return {
             ok: false,
             status: "validation_failed",
@@ -631,7 +717,10 @@ export class Worker {
           `Validation failed after ${this.config.VALIDATION_REPAIR_ATTEMPTS} repair attempt(s).`,
           summarizeValidation(validation)
         );
-        monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
+        monitor?.skipStep(
+          "finalize_jira",
+          "No Jira comment posted because no draft PR was created."
+        );
         return {
           ok: false,
           status: "validation_failed",
@@ -642,7 +731,11 @@ export class Worker {
           validation
         };
       }
-      monitor?.completeStep("validation", "Validation passed successfully.", summarizeValidation(validation));
+      monitor?.completeStep(
+        "validation",
+        "Validation passed successfully.",
+        summarizeValidation(validation)
+      );
 
       this.throwIfStopped();
       this.logger.info("Checking whether repository has changes to commit", {
@@ -653,7 +746,10 @@ export class Worker {
         this.logger.warn("Validation passed but no file changes were present", {
           ticketKey: ticket.key
         });
-        monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
+        monitor?.skipStep(
+          "finalize_jira",
+          "No Jira comment posted because no draft PR was created."
+        );
         return {
           ok: false,
           status: "failed",
@@ -737,7 +833,10 @@ export class Worker {
           baseBranch: this.config.GIT_BASE_BRANCH,
           commitSha
         });
-        monitor?.startStep("finalize_jira", "Posting direct commit details back to Jira and labeling the ticket.");
+        monitor?.startStep(
+          "finalize_jira",
+          "Posting direct commit details back to Jira and labeling the ticket."
+        );
         await this.safeJiraComment(
           ticket.key,
           buildSuccessJiraComment({
@@ -745,7 +844,9 @@ export class Worker {
             review: reviewRun,
             visualReview: visualReviewRun,
             validation,
-            bypassedConfirmationReview: this.config.bypassConfirmationReviewFollowUp && reviewRun.decision === "needs_follow_up",
+            bypassedConfirmationReview:
+              this.config.bypassConfirmationReviewFollowUp &&
+              reviewRun.decision === "needs_follow_up",
             directCommitBranch: this.config.GIT_BASE_BRANCH,
             commitSha
           })
@@ -758,7 +859,10 @@ export class Worker {
         });
         monitor?.startStep("create_pull_request", "Creating a draft GitHub pull request.");
         this.throwIfStopped();
-        const prTitle = await this.githubService.resolveUniquePullRequestTitle(ticket.key, ticket.summary);
+        const prTitle = await this.githubService.resolveUniquePullRequestTitle(
+          ticket.key,
+          ticket.summary
+        );
         const pullRequest = await this.githubService.createDraftPullRequest({
           branchName,
           title: prTitle,
@@ -768,13 +872,20 @@ export class Worker {
           validation
         });
         pullRequestUrl = pullRequest.url;
-        monitor?.completeStep("create_pull_request", `Draft pull request #${pullRequest.number} created.`, [pullRequest.url]);
+        monitor?.completeStep(
+          "create_pull_request",
+          `Draft pull request #${pullRequest.number} created.`,
+          [pullRequest.url]
+        );
 
         this.logger.info("Posting success comment to Jira", {
           ticketKey: ticket.key,
           pullRequestUrl: pullRequest.url
         });
-        monitor?.startStep("finalize_jira", "Posting PR details back to Jira and labeling the ticket.");
+        monitor?.startStep(
+          "finalize_jira",
+          "Posting PR details back to Jira and labeling the ticket."
+        );
         await this.safeJiraComment(
           ticket.key,
           buildSuccessJiraComment({
@@ -782,7 +893,9 @@ export class Worker {
             review: reviewRun,
             visualReview: visualReviewRun,
             validation,
-            bypassedConfirmationReview: this.config.bypassConfirmationReviewFollowUp && reviewRun.decision === "needs_follow_up",
+            bypassedConfirmationReview:
+              this.config.bypassConfirmationReviewFollowUp &&
+              reviewRun.decision === "needs_follow_up",
             pullRequestUrl: pullRequest.url,
             branchName,
             commitSha
@@ -848,7 +961,10 @@ export class Worker {
     try {
       await this.jiraService.addLabel(ticketKey, this.config.JIRA_DONE_LABEL);
     } catch (error) {
-      this.logger.warn(`Failed to add ${this.config.JIRA_DONE_LABEL} label for ${ticketKey}`, error);
+      this.logger.warn(
+        `Failed to add ${this.config.JIRA_DONE_LABEL} label for ${ticketKey}`,
+        error
+      );
     }
   }
 
@@ -856,7 +972,10 @@ export class Worker {
     try {
       await this.jiraService.transitionToReviewStatus(ticketKey);
     } catch (error) {
-      this.logger.warn(`Failed to transition ${ticketKey} to ${this.config.JIRA_REVIEW_TRANSITION_NAME}`, error);
+      this.logger.warn(
+        `Failed to transition ${ticketKey} to ${this.config.JIRA_REVIEW_TRANSITION_NAME}`,
+        error
+      );
     }
   }
 
@@ -878,7 +997,12 @@ export class Worker {
     }
   }
 
-  private async runVisualReview(ticket: JiraTicket, repoPath: string, monitor?: RunMonitor, detail?: string) {
+  private async runVisualReview(
+    ticket: JiraTicket,
+    repoPath: string,
+    monitor?: RunMonitor,
+    detail?: string
+  ) {
     this.logger.info("Running visual review", { ticketKey: ticket.key });
     monitor?.startStep("visual_review", detail ?? "Running isolated browser comparison.");
     const result = await this.visualReviewService.run(ticket, repoPath, {
@@ -912,16 +1036,22 @@ function summarizeValidation(validation: WorkerRunResult["validation"]): string[
 
 function summarizeReview(review: ImplementationReviewResult): string[] {
   const findingLines =
-    review.findings.length > 0 ? review.findings.map((finding) => `Finding: ${finding}`) : ["Finding: none"];
+    review.findings.length > 0
+      ? review.findings.map((finding) => `Finding: ${finding}`)
+      : ["Finding: none"];
 
   return [`Review doc: ${review.reviewPath}`, ...findingLines];
 }
 
 function summarizeVisualReview(review: VisualReviewResult): string[] {
   const findingLines =
-    review.findings.length > 0 ? review.findings.map((finding) => `Finding: ${finding}`) : ["Finding: none"];
+    review.findings.length > 0
+      ? review.findings.map((finding) => `Finding: ${finding}`)
+      : ["Finding: none"];
   const artifactLines =
-    review.artifactPaths.length > 0 ? review.artifactPaths.map((artifactPath) => `Artifact: ${artifactPath}`) : ["Artifact: none"];
+    review.artifactPaths.length > 0
+      ? review.artifactPaths.map((artifactPath) => `Artifact: ${artifactPath}`)
+      : ["Artifact: none"];
 
   return [`Visual report: ${review.reportPath}`, ...findingLines, ...artifactLines];
 }
@@ -1013,7 +1143,9 @@ function buildBypassedConfirmationReviewComment(review: ImplementationReviewResu
   ].join("\n");
 }
 
-function buildValidationSummaryLines(validation: NonNullable<WorkerRunResult["validation"]>): string[] {
+function buildValidationSummaryLines(
+  validation: NonNullable<WorkerRunResult["validation"]>
+): string[] {
   const passedSteps = validation.steps.filter((step) => step.success);
   if (passedSteps.length === 0) {
     return ["Validation: passed."];
@@ -1030,5 +1162,7 @@ class WorkerStoppedError extends Error {
 }
 
 function isWorkerStoppedError(error: unknown): boolean {
-  return error instanceof WorkerStoppedError || (error instanceof Error && error.name === "AbortError");
+  return (
+    error instanceof WorkerStoppedError || (error instanceof Error && error.name === "AbortError")
+  );
 }

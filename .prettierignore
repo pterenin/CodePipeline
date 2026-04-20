@@ -1,0 +1,6 @@
+dist/
+node_modules/
+workdir/
+docs/screenshots/
+package-lock.json
+src/ui.ts

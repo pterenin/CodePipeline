@@ -1,0 +1,6 @@
+{
+  "key": "DEMO-103",
+  "summary": "Rotate the production API key for the billing service",
+  "description": "Goal: swap the production API key for the billing provider without downtime.\n\nAcceptance criteria:\n- Generate the new key in the provider dashboard\n- Roll it out to every environment via the secrets manager\n- Verify the billing job still runs and the old key is revoked",
+  "url": "https://example.invalid/browse/DEMO-103"
+}

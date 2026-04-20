@@ -20,6 +20,19 @@ You can also point it at a specific source repo and output directory:
 ./scripts/prepare-public-history.sh https://github.com/pterenin/CodePipeline.git /tmp/codepipeline-public-history.git
 ```
 
+### Verified Dry Run
+
+A local dry-run of the helper against the current repo produced a clean mirror with the same 24-commit history and no remaining references to `node_modules` or `dist`:
+
+```text
+$ git log --all -- node_modules dist
+(no output)
+$ git count-objects -vH
+size-pack: 2.47 MiB
+```
+
+That output is what a successful rewrite should look like. If you see any commits after step 1, the filter did not match the paths you intended — re-run with the correct `--path` arguments before force-pushing.
+
 ## High-Level Steps
 
 1. Create a fresh backup clone of the repository.

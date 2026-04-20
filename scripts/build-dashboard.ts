@@ -15,7 +15,7 @@ async function main(): Promise<void> {
   await build({
     bundle: true,
     define: {
-      "process.env.NODE_ENV": JSON.stringify("production"),
+      "process.env.NODE_ENV": JSON.stringify("production")
     },
     format: "esm" as const,
     minify: true,
@@ -25,9 +25,9 @@ async function main(): Promise<void> {
       contents: rewriteDashboardSource(getDashboardClientSource()),
       loader: "jsx" as const,
       resolveDir: projectRoot,
-      sourcefile: "dashboard-inline.jsx",
+      sourcefile: "dashboard-inline.jsx"
     },
-    target: ["es2020"],
+    target: ["es2020"]
   });
 
   console.log(`Built dashboard asset: ${outputFile}`);
@@ -38,7 +38,7 @@ function rewriteDashboardSource(source: string): string {
     source,
     /^const \{ useEffect, useMemo, useState \} = React;\s*/u,
     'import React, { useEffect, useMemo, useState } from "react";\nimport { createRoot } from "react-dom/client";\n\n',
-    "React imports",
+    "React imports"
   );
 
   rewrittenSource = replaceOnce(
@@ -46,23 +46,18 @@ function rewriteDashboardSource(source: string): string {
     /const root = ReactDOM\.createRoot\(document\.getElementById\("app"\)\);/u,
     [
       'const rootElement = document.getElementById("app");',
-      'if (!rootElement) {',
+      "if (!rootElement) {",
       '  throw new Error("Dashboard mount element not found.");',
       "}",
-      "const root = createRoot(rootElement);",
+      "const root = createRoot(rootElement);"
     ].join("\n"),
-    "dashboard root creation",
+    "dashboard root creation"
   );
 
   return rewrittenSource;
 }
 
-function replaceOnce(
-  input: string,
-  pattern: RegExp,
-  replacement: string,
-  label: string,
-): string {
+function replaceOnce(input: string, pattern: RegExp, replacement: string, label: string): string {
   const output = input.replace(pattern, replacement);
   if (output === input) {
     throw new Error(`Could not rewrite ${label} while bundling dashboard assets.`);

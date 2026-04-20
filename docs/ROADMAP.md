@@ -23,12 +23,12 @@ This document tracks the work needed to make CodePipeline a healthy public repos
 - [x] Create an explicit open-source readiness plan
 - [x] Unify the public project name
 - [x] Add OSS-facing project docs:
-  `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, issue templates, PR template
+      `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, issue templates, PR template
 - [x] Add a license
 - [x] Align `README.md` and `.env.example` with the current runtime behavior
 - [x] Add basic package metadata for a public repository
 - [x] Add basic CI for install, typecheck, and build
-- [ ] Rewrite git history if needed so committed dependency/build artifacts never appear in the public baseline
+- [ ] Rewrite git history if needed so committed dependency/build artifacts never appear in the public baseline (see `docs/HISTORY_CLEANUP.md`, `scripts/prepare-public-history.sh`)
 - [x] Run a dedicated secret scan across git history before broad announcement
 
 ## Phase 2: Productization
@@ -43,11 +43,12 @@ This document tracks the work needed to make CodePipeline a healthy public repos
 
 ## Phase 3: Trust And Maintenance
 
-- [ ] Add targeted tests for config parsing, Jira query generation, guardrails, and log redaction
-- [ ] Add a small demo or fixture repo for end-to-end evaluation
-- [ ] Add screenshots or a short demo walkthrough to the README
-- [ ] Document the operational security model in more depth
-- [ ] Document how to recover from interrupted runs and clean stale worktrees
+- [x] Add targeted tests for text helpers and guardrails (run via `npm test`)
+- [ ] Add targeted tests for config parsing, Jira query generation, and log redaction
+- [x] Add a small demo fixture for no-credential evaluation (`npm run demo`, `fixtures/tickets/`)
+- [x] Add screenshots to the README (`docs/screenshots/dashboard.png`, regenerable via `scripts/capture-dashboard.ts`)
+- [x] Document the operational security model in more depth (`SECURITY.md`)
+- [x] Document how to recover from interrupted runs and clean stale worktrees (`docs/TROUBLESHOOTING.md`)
 
 ## Risks To Watch
 

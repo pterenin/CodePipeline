@@ -17,7 +17,7 @@ It is built for cautious human-reviewed automation rather than fully autonomous 
 - Release notes: [CHANGELOG.md](./CHANGELOG.md)
 - Docker, history cleanup, and troubleshooting live under [docs/](./docs)
 
-The `package.json` is marked `"private": true` on purpose — CodePipeline is meant to be cloned and run as a self-hosted service, not published to the npm registry.
+CodePipeline is distributed as source, not as an npm package — clone the repo to run it.
 
 ## What It Does
 
@@ -72,6 +72,17 @@ For a safer first verification run that skips push, pull request creation, and J
 ```bash
 curl -X POST "http://localhost:3000/run-next?dryRun=true"
 ```
+
+### No-credential demo
+
+To see how guardrails and branch naming would treat a handful of example tickets without any Jira, GitHub, or Codex credentials:
+
+```bash
+npm install
+npm run demo
+```
+
+The demo reads the fixtures under `fixtures/tickets/`, runs `evaluateTicketGuardrails` and `slugify` against them, and prints the decision for each. Nothing external is contacted.
 
 ## Requirements
 

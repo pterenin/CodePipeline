@@ -20,7 +20,7 @@ export function evaluateTicketGuardrails(
     ticket.summary,
     ticket.description,
     ticket.acceptanceCriteria ?? "",
-    ...(config.scanHumanCommentsInGuardrails ? ticket.humanComments ?? [] : [])
+    ...(config.scanHumanCommentsInGuardrails ? (ticket.humanComments ?? []) : [])
   ].join("\n");
 
   const hardBlockedKeyword = findHardBlockedKeyword(keywordText, config.hardBlockedKeywords);

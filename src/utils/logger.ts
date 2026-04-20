@@ -93,7 +93,9 @@ function sanitizeError(error: Error, seen: WeakSet<object>): Record<string, unkn
     base.responseData = sanitizeMeta(maybeAxiosError.response?.data, seen);
     base.request = {
       method: maybeAxiosError.config?.method,
-      baseURL: maybeAxiosError.config?.baseURL ? redactString(maybeAxiosError.config.baseURL) : undefined,
+      baseURL: maybeAxiosError.config?.baseURL
+        ? redactString(maybeAxiosError.config.baseURL)
+        : undefined,
       url: maybeAxiosError.config?.url ? redactString(maybeAxiosError.config.url) : undefined,
       timeout: maybeAxiosError.config?.timeout
     };

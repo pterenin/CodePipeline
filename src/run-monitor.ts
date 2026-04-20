@@ -115,7 +115,7 @@ export class RunMonitor {
   setStepDetail(stepId: WorkflowStepId, detail: string): void {
     this.updateStep(stepId, (step) => ({
       ...step,
-      detail,
+      detail
     }));
     this.emit();
   }
@@ -194,8 +194,13 @@ export class RunMonitor {
     this.emit();
   }
 
-  private updateStep(stepId: WorkflowStepId, updater: (step: WorkflowStepState) => WorkflowStepState): void {
-    this.snapshot.steps = this.snapshot.steps.map((step) => (step.id === stepId ? updater(step) : step));
+  private updateStep(
+    stepId: WorkflowStepId,
+    updater: (step: WorkflowStepState) => WorkflowStepState
+  ): void {
+    this.snapshot.steps = this.snapshot.steps.map((step) =>
+      step.id === stepId ? updater(step) : step
+    );
   }
 
   private emit(): void {

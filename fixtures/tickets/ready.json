@@ -1,0 +1,9 @@
+{
+  "key": "DEMO-101",
+  "summary": "Rename getCwd to getCurrentWorkingDirectory in path utilities",
+  "description": "Goal: rename `getCwd` to `getCurrentWorkingDirectory` across the service for clarity.\n\nAcceptance criteria:\n- Update every call site in `src/utils/path.ts` and downstream consumers\n- Add a unit test that covers the renamed helper\n- Definition of done includes a passing typecheck and build",
+  "url": "https://example.invalid/browse/DEMO-101",
+  "humanComments": [
+    "Reviewer preference is to keep a short re-export alias during the transition window."
+  ]
+}

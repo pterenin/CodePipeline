@@ -43,7 +43,10 @@ const strongDescription = [
 
 describe("evaluateTicketGuardrails", () => {
   it("returns null for tickets with strong requirements and no hard-blocked keywords", () => {
-    const result = evaluateTicketGuardrails(ticket({ description: strongDescription }), defaultConfig);
+    const result = evaluateTicketGuardrails(
+      ticket({ description: strongDescription }),
+      defaultConfig
+    );
     assert.equal(result, null);
   });
 
@@ -94,10 +97,7 @@ describe("evaluateTicketGuardrails", () => {
   });
 
   it("rejects tickets with weak requirements", () => {
-    const result = evaluateTicketGuardrails(
-      ticket({ description: "Fix this" }),
-      defaultConfig
-    );
+    const result = evaluateTicketGuardrails(ticket({ description: "Fix this" }), defaultConfig);
     assert.match(result ?? "", /weak or incomplete/i);
   });
 
