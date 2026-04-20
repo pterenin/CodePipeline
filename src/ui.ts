@@ -684,6 +684,141 @@ const appHtmlTemplate = `<!DOCTYPE html>
         margin-top: 18px;
       }
 
+      .transcript-panel {
+        overflow: hidden;
+      }
+
+      .transcript-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+
+      .transcript-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        border: 1px solid rgba(232, 236, 255, 0.16);
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--muted);
+        font-size: 0.76rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        white-space: nowrap;
+      }
+
+      .transcript-shell {
+        height: 440px;
+        border-radius: 22px;
+        border: 1px solid rgba(232, 236, 255, 0.14);
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.015)),
+          rgba(22, 18, 35, 0.96);
+        overflow: hidden;
+      }
+
+      .transcript-feed {
+        height: 100%;
+        overflow: auto;
+        padding: 18px;
+        display: grid;
+        align-content: start;
+        gap: 12px;
+      }
+
+      .transcript-empty {
+        height: 100%;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        color: var(--subtle);
+        text-align: center;
+        line-height: 1.7;
+      }
+
+      .transcript-entry {
+        display: grid;
+        grid-template-columns: 44px minmax(0, 1fr);
+        gap: 12px;
+        align-items: start;
+      }
+
+      .transcript-avatar {
+        width: 44px;
+        height: 44px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 16px;
+        border: 1px solid rgba(232, 236, 255, 0.14);
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--muted);
+        font-size: 0.7rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        font-weight: 700;
+      }
+
+      .transcript-entry.assistant .transcript-avatar {
+        border-color: rgba(122, 184, 255, 0.28);
+        background: rgba(122, 184, 255, 0.12);
+        color: #dceeff;
+      }
+
+      .transcript-entry.status .transcript-avatar {
+        border-color: rgba(255, 209, 102, 0.26);
+        background: rgba(255, 209, 102, 0.12);
+        color: #ffe2a3;
+      }
+
+      .transcript-bubble {
+        padding: 14px 16px;
+        border-radius: 18px;
+        border: 1px solid rgba(232, 236, 255, 0.12);
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.065), rgba(255, 255, 255, 0.02)),
+          rgba(36, 30, 56, 0.92);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      }
+
+      .transcript-entry.system .transcript-bubble {
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.015)),
+          rgba(28, 23, 44, 0.94);
+      }
+
+      .transcript-entry.status .transcript-bubble {
+        border-color: rgba(255, 209, 102, 0.22);
+        background:
+          linear-gradient(180deg, rgba(255, 209, 102, 0.08), rgba(255, 209, 102, 0.02)),
+          rgba(38, 31, 41, 0.94);
+      }
+
+      .transcript-entry-label {
+        margin-bottom: 8px;
+        color: var(--subtle);
+        font-size: 0.72rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .transcript-entry-body {
+        color: #eef2ff;
+        line-height: 1.65;
+        font-size: 0.92rem;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+
+      .transcript-entry-body.code {
+        font-family: "SFMono-Regular", "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+        font-size: 0.82rem;
+      }
+
       .summary-item {
         padding: 14px 15px;
         border-radius: 18px;
@@ -936,6 +1071,15 @@ const appHtmlTemplate = `<!DOCTYPE html>
           align-items: flex-start;
           flex-direction: column;
         }
+
+        .transcript-head {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+
+        .transcript-shell {
+          height: 360px;
+        }
       }
     </style>
   </head>
@@ -947,7 +1091,7 @@ const appHtmlTemplate = `<!DOCTYPE html>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script type="text/babel">
-      const { useEffect, useMemo, useState } = React;
+      const { useEffect, useMemo, useRef, useState } = React;
       const SNAPSHOT_STORAGE_KEY = "codepipeline:lastSnapshot";
       const CONNECTION_STORAGE_KEY = "codepipeline:lastSyncAt";
       const QUEUE_STEP_ID = "fetch_ticket";
@@ -1151,6 +1295,94 @@ const appHtmlTemplate = `<!DOCTYPE html>
         return "Live";
       }
 
+      function findFocusedStep(snapshot) {
+        if (snapshot.currentStepId) {
+          return snapshot.steps.find(function (step) {
+            return step.id === snapshot.currentStepId;
+          }) || null;
+        }
+
+        const candidates = snapshot.steps.filter(function (step) {
+          return (
+            step.startedAt ||
+            step.finishedAt ||
+            step.detail ||
+            (step.output && step.output.length > 0)
+          );
+        });
+        if (!candidates.length) {
+          return null;
+        }
+
+        return candidates
+          .slice()
+          .sort(function (left, right) {
+            const leftTime = new Date(left.finishedAt || left.startedAt || 0).getTime();
+            const rightTime = new Date(right.finishedAt || right.startedAt || 0).getTime();
+            return rightTime - leftTime;
+          })[0];
+      }
+
+      function buildStepTranscriptEntries(step, logs) {
+        if (!step) {
+          return [];
+        }
+
+        const entries = [];
+        const seen = new Set();
+
+        function pushEntry(role, label, text, options) {
+          const normalizedText = (text || "").trim();
+          if (!normalizedText) {
+            return;
+          }
+
+          const key = role + "|" + normalizedText;
+          if (seen.has(key)) {
+            return;
+          }
+          seen.add(key);
+
+          entries.push({
+            id: role + "-" + entries.length,
+            role,
+            label,
+            text: normalizedText,
+            code: Boolean(options && options.code)
+          });
+        }
+
+        if (step.currentCommand) {
+          pushEntry("system", "Command", step.currentCommand, { code: true });
+        }
+
+        if (step.detail) {
+          pushEntry("status", "Status", step.detail);
+        }
+
+        logs
+          .filter(function (entry) {
+            return entry.stepId === step.id;
+          })
+          .slice(-6)
+          .forEach(function (entry) {
+            pushEntry("system", "Event", entry.message);
+          });
+
+        step.output.forEach(function (line) {
+          if (line.startsWith("stderr:")) {
+            pushEntry("status", "stderr", line.replace(/^stderr:\\s*/, ""));
+            return;
+          }
+
+          pushEntry("assistant", "Activity", line, {
+            code: /^(\$|>|npm |pnpm |yarn |bun |codex )/i.test(line)
+          });
+        });
+
+        return entries;
+      }
+
       function App() {
         const [snapshot, setSnapshot] = useState(function () {
           return readCachedSnapshot() || {
@@ -1300,6 +1532,12 @@ const appHtmlTemplate = `<!DOCTYPE html>
         const summaryFields = useMemo(function () {
           return buildSummaryFields(snapshot);
         }, [snapshot]);
+        const focusedStep = useMemo(function () {
+          return findFocusedStep(snapshot);
+        }, [snapshot]);
+        const transcriptEntries = useMemo(function () {
+          return buildStepTranscriptEntries(focusedStep, snapshot.logs);
+        }, [focusedStep, snapshot.logs]);
         const completedSteps = snapshot.steps.filter(function (step) {
           return step.status === "completed";
         }).length;
@@ -1392,6 +1630,8 @@ const appHtmlTemplate = `<!DOCTYPE html>
                   </p>
                   <TicketQueue tickets={snapshot.tickets} />
                 </article>
+
+                <CurrentStepTranscript step={focusedStep} entries={transcriptEntries} />
 
                 <article className="panel">
                   <h2 className="panel-title">Run Summary</h2>
@@ -1587,6 +1827,75 @@ const appHtmlTemplate = `<!DOCTYPE html>
               );
             })}
           </div>
+        );
+      }
+
+      function CurrentStepTranscript(props) {
+        const feedRef = useRef(null);
+
+        useEffect(function () {
+          const node = feedRef.current;
+          if (!node) {
+            return;
+          }
+
+          node.scrollTop = node.scrollHeight;
+        }, [
+          props.step ? props.step.id : "none",
+          props.step ? props.step.detail : "",
+          props.step ? props.step.currentCommand : "",
+          props.step ? props.step.output.length : 0,
+          props.step ? props.step.status : "idle",
+          props.entries.length
+        ]);
+
+        return (
+          <article className="panel transcript-panel">
+            <div className="transcript-head">
+              <div>
+                <h2 className="panel-title">Current Step Activity</h2>
+                <p className="panel-copy">
+                  Read-only live transcript for the active pipeline stage. It stays scrollable like chat so you can tell whether the step is still working.
+                </p>
+              </div>
+              <div className="transcript-status">
+                <span className={"indicator " + (props.step ? props.step.status : "idle")}></span>
+                <span>{props.step ? props.step.label : "Waiting"}</span>
+              </div>
+            </div>
+
+            <div className="transcript-shell">
+              {props.step && props.entries.length ? (
+                <div className="transcript-feed" ref={feedRef}>
+                  {props.entries.map(function (entry) {
+                    return (
+                      <div className={"transcript-entry " + entry.role} key={entry.id}>
+                        <div className="transcript-avatar">
+                          {entry.role === "assistant"
+                            ? "AI"
+                            : entry.role === "status"
+                              ? "ST"
+                              : "SYS"}
+                        </div>
+                        <div className="transcript-bubble">
+                          <div className="transcript-entry-label">{entry.label}</div>
+                          <div className={"transcript-entry-body" + (entry.code ? " code" : "")}>
+                            {entry.text}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="transcript-empty">
+                  {props.step
+                    ? "This step has started, but it has not emitted any live activity yet."
+                    : "No step is running right now. Once the queue starts, live stage activity will appear here."}
+                </div>
+              )}
+            </div>
+          </article>
         );
       }
 

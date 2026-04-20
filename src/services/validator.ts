@@ -1,6 +1,7 @@
 import { execa } from "execa";
 
 import type { ValidationResult, ValidationStepResult } from "../types.js";
+import { createProcessOutputBuffer } from "../utils/process-output.js";
 import { Logger } from "../utils/logger.js";
 
 export class ValidatorService {
@@ -12,6 +13,7 @@ export class ValidatorService {
     repoPath: string,
     hooks?: {
       onCommandStart?: (command: string) => void;
+      onOutput?: (message: string) => void;
       signal?: AbortSignal;
     }
   ): Promise<ValidationResult> {
@@ -27,13 +29,30 @@ export class ValidatorService {
       });
       hooks?.onCommandStart?.(commandLabel);
       try {
-        const result = await execa(commandLabel, {
+        const child = execa(commandLabel, {
           cwd: repoPath,
           shell: true,
           reject: false,
           all: false,
           ...(hooks?.signal ? { cancelSignal: hooks.signal } : {})
         });
+        const stdoutBuffer = createProcessOutputBuffer((line) => {
+          hooks?.onOutput?.(line);
+        });
+        const stderrBuffer = createProcessOutputBuffer((line) => {
+          hooks?.onOutput?.(`stderr: ${line}`);
+        });
+
+        child.stdout?.on("data", (chunk) => {
+          stdoutBuffer.push(chunk);
+        });
+        child.stderr?.on("data", (chunk) => {
+          stderrBuffer.push(chunk);
+        });
+
+        const result = await child;
+        stdoutBuffer.flush();
+        stderrBuffer.flush();
 
         const step: ValidationStepResult = {
           command: commandLabel,

@@ -11,6 +11,7 @@ import { z } from "zod";
 import type { AppConfig } from "../config.js";
 import type { JiraTicket, VisualReviewResult } from "../types.js";
 import { Logger } from "../utils/logger.js";
+import { createProcessOutputBuffer } from "../utils/process-output.js";
 
 const visualReviewTargetSchema = z
   .object({
@@ -116,6 +117,7 @@ export class VisualReviewService {
     hooks?: {
       signal?: AbortSignal;
       onProgress?: (message: string) => void;
+      onOutput?: (message: string) => void;
     }
   ): Promise<VisualReviewResult> {
     const planPath = buildVisualReviewPlanPath(ticket.key);
@@ -197,7 +199,7 @@ export class VisualReviewService {
 
       if (implementationTarget.startCommand) {
         hooks?.onProgress?.("Starting implementation preview in its own process.");
-        previewProcess = this.startPreviewProcess(plan, repoPath, hooks?.signal);
+        previewProcess = this.startPreviewProcess(plan, repoPath, hooks?.signal, hooks?.onOutput);
       }
 
       const implementationUrl = resolveTargetUrl(implementationTarget, repoPath);
@@ -358,7 +360,8 @@ export class VisualReviewService {
   private startPreviewProcess(
     plan: VisualReviewPlan,
     repoPath: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    onOutput?: (message: string) => void
   ): PreviewProcess {
     const workingDirectory = plan.implementation?.workingDirectory
       ? path.resolve(repoPath, plan.implementation.workingDirectory)
@@ -374,6 +377,16 @@ export class VisualReviewService {
         ...process.env,
         CI: "1"
       }
+    });
+    const stderrBuffer = createProcessOutputBuffer((line) => {
+      onOutput?.(`preview: ${line}`);
+    });
+
+    child.stderr?.on("data", (chunk) => {
+      stderrBuffer.push(chunk);
+    });
+    child.finally(() => {
+      stderrBuffer.flush();
     });
 
     return child as PreviewProcess;

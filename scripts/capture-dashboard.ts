@@ -75,7 +75,12 @@ function buildMockSnapshot(): WorkerRunSnapshot {
       detail:
         "Refreshing docs/tickets/PROJ-101.md, updating docs/tickets/PROJ-101.visual-plan.json, and implementing the ticket in one Codex pass.",
       currentCommand: "codex exec implement",
-      output: ["Reading src/services/auth.ts", "Planning changes across 4 files"]
+      output: [
+        "Launching Codex CLI to implement the ticket from the documented context.",
+        "Reading src/services/auth.ts",
+        "Inspecting shared token helper callers.",
+        "Planning changes across 4 files."
+      ]
     },
     visual_review: { status: "idle" },
     review_implementation: { status: "idle" },

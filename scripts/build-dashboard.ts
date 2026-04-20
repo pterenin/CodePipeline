@@ -36,8 +36,8 @@ async function main(): Promise<void> {
 function rewriteDashboardSource(source: string): string {
   let rewrittenSource = replaceOnce(
     source,
-    /^const \{ useEffect, useMemo, useState \} = React;\s*/u,
-    'import React, { useEffect, useMemo, useState } from "react";\nimport { createRoot } from "react-dom/client";\n\n',
+    /^const \{ useEffect, useMemo, useRef, useState \} = React;\s*/u,
+    'import React, { useEffect, useMemo, useRef, useState } from "react";\nimport { createRoot } from "react-dom/client";\n\n',
     "React imports"
   );
 

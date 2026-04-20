@@ -19,6 +19,7 @@ import {
   extractLikelyRepoFileReferences,
   formatJiraCommentsForPrompt
 } from "../utils/ticket-context.js";
+import { createProcessOutputBuffer } from "../utils/process-output.js";
 import { truncate } from "../utils/text.js";
 
 export class AgentService {
@@ -32,6 +33,7 @@ export class AgentService {
     repoPath: string,
     hooks?: {
       onProgress?: (message: string) => void;
+      onOutput?: (message: string) => void;
       signal?: AbortSignal;
     } & {
       reviewFindingsPath?: string;
@@ -51,14 +53,18 @@ export class AgentService {
     ticket: JiraTicket,
     repoPath: string,
     validation: ValidationResult,
-    signal?: AbortSignal
+    hooks?: {
+      onProgress?: (message: string) => void;
+      onOutput?: (message: string) => void;
+      signal?: AbortSignal;
+    }
   ): Promise<AgentRunResult> {
     return this.runCodex({
       ticket,
       repoPath,
       mode: "repair",
       validation,
-      ...(signal ? { signal } : {})
+      ...(hooks ? { hooks } : {})
     });
   }
 
@@ -67,6 +73,7 @@ export class AgentService {
     repoPath: string,
     hooks?: {
       onProgress?: (message: string) => void;
+      onOutput?: (message: string) => void;
       signal?: AbortSignal;
     }
   ): Promise<ImplementationReviewResult> {
@@ -120,6 +127,7 @@ export class AgentService {
     reviewFindingsPath?: string;
     hooks?: {
       onProgress?: (message: string) => void;
+      onOutput?: (message: string) => void;
       signal?: AbortSignal;
     };
     signal?: AbortSignal;
@@ -164,7 +172,7 @@ export class AgentService {
     );
 
     try {
-      const result = await execa(
+      const child = execa(
         this.config.CODEX_CLI_PATH,
         buildCodexExecArgs({
           model: this.config.OPENAI_MODEL,
@@ -183,6 +191,23 @@ export class AgentService {
           }
         }
       );
+      const stdoutBuffer = createProcessOutputBuffer((line) => {
+        input.hooks?.onOutput?.(line);
+      });
+      const stderrBuffer = createProcessOutputBuffer((line) => {
+        input.hooks?.onOutput?.(`stderr: ${line}`);
+      });
+
+      child.stdout?.on("data", (chunk) => {
+        stdoutBuffer.push(chunk);
+      });
+      child.stderr?.on("data", (chunk) => {
+        stderrBuffer.push(chunk);
+      });
+
+      const result = await child;
+      stdoutBuffer.flush();
+      stderrBuffer.flush();
 
       const summary = await readSummary(outputPath, result.stdout, result.stderr);
       const changedFiles = await listChangedFiles(input.repoPath);

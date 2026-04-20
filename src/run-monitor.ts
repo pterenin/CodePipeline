@@ -9,6 +9,8 @@ import {
 } from "./types.js";
 
 type SnapshotListener = (snapshot: WorkerRunSnapshot) => void;
+const MAX_STEP_OUTPUT_LINES = 240;
+const MAX_STEP_OUTPUT_LINE_LENGTH = 800;
 
 export class RunMonitor {
   private readonly listeners = new Set<SnapshotListener>();
@@ -125,6 +127,29 @@ export class RunMonitor {
       ...step,
       currentCommand: command
     }));
+    this.emit();
+  }
+
+  appendStepOutput(stepId: WorkflowStepId, output: string | string[]): void {
+    const nextLines = normalizeStepOutput(output);
+    if (nextLines.length === 0) {
+      return;
+    }
+
+    this.updateStep(stepId, (step) => {
+      const merged = [...step.output];
+      for (const line of nextLines) {
+        if (merged[merged.length - 1] === line) {
+          continue;
+        }
+        merged.push(line);
+      }
+
+      return {
+        ...step,
+        output: merged.slice(-MAX_STEP_OUTPUT_LINES)
+      };
+    });
     this.emit();
   }
 
@@ -255,4 +280,17 @@ function cloneSnapshot(snapshot: WorkerRunSnapshot): WorkerRunSnapshot {
     logs: snapshot.logs.map((entry) => ({ ...entry })),
     result
   };
+}
+
+function normalizeStepOutput(output: string | string[]): string[] {
+  const lines = Array.isArray(output) ? output : [output];
+
+  return lines
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) =>
+      line.length > MAX_STEP_OUTPUT_LINE_LENGTH
+        ? `${line.slice(0, MAX_STEP_OUTPUT_LINE_LENGTH - 1).trimEnd()}…`
+        : line
+    );
 }

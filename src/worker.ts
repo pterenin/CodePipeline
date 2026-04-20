@@ -76,14 +76,13 @@ export class Worker {
     }
 
     const dryRun = options?.dryRun ?? this.config.DRY_RUN_BY_DEFAULT;
-    let sleepAssertionProcess: SleepAssertionProcess | undefined;
     this.isRunning = true;
     this.stopRequested = false;
     this.abortController = new AbortController();
     this.logger.info("Worker run started", { dryRun });
     monitor?.startRun();
     monitor?.log("Worker run started.");
-    sleepAssertionProcess = this.startSleepPrevention(monitor);
+    const sleepAssertionProcess = this.startSleepPrevention(monitor);
     if (dryRun) {
       monitor?.log(
         "Dry run mode is enabled. Publish, PR creation, and Jira mutation steps will be skipped."
@@ -325,9 +324,14 @@ export class Worker {
         "implement_changes",
         "Running the implementation agent. It will refresh the ticket context markdown, create the visual review plan, and then apply the ticket changes."
       );
+      monitor?.setStepCurrentCommand("implement_changes", "codex exec");
       const initialAgentRun = await this.agentService.implementTicket(ticket, repoPath, {
         onProgress: (message) => {
           monitor?.setStepDetail("implement_changes", message);
+          monitor?.appendStepOutput("implement_changes", message);
+        },
+        onOutput: (message) => {
+          monitor?.appendStepOutput("implement_changes", message);
         },
         ...(this.abortController?.signal ? { signal: this.abortController.signal } : {})
       });
@@ -412,9 +416,14 @@ export class Worker {
         "review_implementation",
         "Running a fresh review pass against the implemented ticket."
       );
+      monitor?.setStepCurrentCommand("review_implementation", "codex exec");
       let reviewRun = await this.agentService.reviewTicketImplementation(ticket, repoPath, {
         onProgress: (message) => {
           monitor?.setStepDetail("review_implementation", message);
+          monitor?.appendStepOutput("review_implementation", message);
+        },
+        onOutput: (message) => {
+          monitor?.appendStepOutput("review_implementation", message);
         },
         ...(this.abortController?.signal ? { signal: this.abortController.signal } : {})
       });
@@ -451,9 +460,14 @@ export class Worker {
         monitor?.log(reviewMessage, "review_implementation");
 
         monitor?.startStep("implement_changes", "Addressing post-implementation review findings.");
+        monitor?.setStepCurrentCommand("implement_changes", "codex exec");
         const followUpRun = await this.agentService.implementTicket(ticket, repoPath, {
           onProgress: (message) => {
             monitor?.setStepDetail("implement_changes", message);
+            monitor?.appendStepOutput("implement_changes", message);
+          },
+          onOutput: (message) => {
+            monitor?.appendStepOutput("implement_changes", message);
           },
           reviewFindingsPath: reviewRun.reviewPath,
           ...(this.abortController?.signal ? { signal: this.abortController.signal } : {})
@@ -542,9 +556,14 @@ export class Worker {
           "review_implementation",
           "Confirming the follow-up changes against the ticket."
         );
+        monitor?.setStepCurrentCommand("review_implementation", "codex exec");
         reviewRun = await this.agentService.reviewTicketImplementation(ticket, repoPath, {
           onProgress: (message) => {
             monitor?.setStepDetail("review_implementation", message);
+            monitor?.appendStepOutput("review_implementation", message);
+          },
+          onOutput: (message) => {
+            monitor?.appendStepOutput("review_implementation", message);
           },
           ...(this.abortController?.signal ? { signal: this.abortController.signal } : {})
         });
@@ -646,12 +665,26 @@ export class Worker {
           "validation",
           `Repair attempt ${attempt} of ${this.config.VALIDATION_REPAIR_ATTEMPTS} is running.`
         );
+        monitor?.setStepCurrentCommand("validation", "codex exec repair");
+        monitor?.appendStepOutput(
+          "validation",
+          `Repair attempt ${attempt} of ${this.config.VALIDATION_REPAIR_ATTEMPTS} started.`
+        );
 
         const repairRun = await this.agentService.repairFromValidation(
           ticket,
           repoPath,
           validation,
-          this.abortController?.signal
+          {
+            onProgress: (message) => {
+              monitor?.setStepDetail("validation", message);
+              monitor?.appendStepOutput("validation", message);
+            },
+            onOutput: (message) => {
+              monitor?.appendStepOutput("validation", message);
+            },
+            ...(this.abortController?.signal ? { signal: this.abortController.signal } : {})
+          }
         );
         this.throwIfStopped();
 
@@ -969,8 +1002,12 @@ export class Worker {
   private async runValidationWithMonitor(repoPath: string, monitor?: RunMonitor) {
     return this.validatorService.run(repoPath, {
       onCommandStart: (command) => {
-        monitor?.setStepCurrentCommand("validation", command);
         monitor?.startStep("validation", `Running validation command: ${command}`);
+        monitor?.setStepCurrentCommand("validation", command);
+        monitor?.appendStepOutput("validation", `Running command: ${command}`);
+      },
+      onOutput: (message) => {
+        monitor?.appendStepOutput("validation", message);
       },
       ...(this.abortController?.signal ? { signal: this.abortController.signal } : {})
     });
@@ -992,9 +1029,14 @@ export class Worker {
   ) {
     this.logger.info("Running visual review", { ticketKey: ticket.key });
     monitor?.startStep("visual_review", detail ?? "Running isolated browser comparison.");
+    monitor?.setStepCurrentCommand("visual_review", "browser comparison");
     const result = await this.visualReviewService.run(ticket, repoPath, {
       onProgress: (message) => {
         monitor?.setStepDetail("visual_review", message);
+        monitor?.appendStepOutput("visual_review", message);
+      },
+      onOutput: (message) => {
+        monitor?.appendStepOutput("visual_review", message);
       },
       ...(this.abortController?.signal ? { signal: this.abortController.signal } : {})
     });

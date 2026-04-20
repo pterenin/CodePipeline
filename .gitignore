@@ -19,6 +19,7 @@ Thumbs.db
 
 .idea/
 .vscode/
+.claude/
 
 workdir/
 .tmp/
