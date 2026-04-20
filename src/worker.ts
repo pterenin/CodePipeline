@@ -524,20 +524,42 @@ export class Worker {
 
         if (reviewRun.decision === "needs_follow_up") {
           const message = `Post-implementation review still found unresolved ticket gaps after automated follow-up. See ${reviewRun.reviewPath}.`;
-          this.logger.warn("Confirmation review still found unresolved findings", {
-            ticketKey: ticket.key,
-            findings: reviewRun.findings
-          });
-          monitor?.failStep("review_implementation", message, summarizeReview(reviewRun));
-          monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
-          return {
-            ok: true,
-            status: "needs_human_review",
-            ...(dryRun ? { dryRun: true } : {}),
-            ticketKey: ticket.key,
-            branchName,
-            message
-          };
+
+          if (this.config.bypassConfirmationReviewFollowUp) {
+            this.logger.warn("Confirmation review found unresolved findings, but bypass is enabled", {
+              ticketKey: ticket.key,
+              findings: reviewRun.findings,
+              dryRun
+            });
+            monitor?.log(
+              dryRun
+                ? `Confirmation review still found unresolved follow-up items, but BYPASS_CONFIRMATION_REVIEW_FOLLOW_UP is enabled. Dry run mode would post a Jira warning comment and continue.`
+                : `Confirmation review still found unresolved follow-up items, but BYPASS_CONFIRMATION_REVIEW_FOLLOW_UP is enabled. Posting a Jira warning comment and continuing.`,
+              "review_implementation"
+            );
+
+            if (!dryRun) {
+              await this.safeJiraComment(
+                ticket.key,
+                buildBypassedConfirmationReviewComment(reviewRun)
+              );
+            }
+          } else {
+            this.logger.warn("Confirmation review still found unresolved findings", {
+              ticketKey: ticket.key,
+              findings: reviewRun.findings
+            });
+            monitor?.failStep("review_implementation", message, summarizeReview(reviewRun));
+            monitor?.skipStep("finalize_jira", "No Jira comment posted because no draft PR was created.");
+            return {
+              ok: true,
+              status: "needs_human_review",
+              ...(dryRun ? { dryRun: true } : {}),
+              ticketKey: ticket.key,
+              branchName,
+              message
+            };
+          }
         }
       }
 
@@ -723,6 +745,7 @@ export class Worker {
             review: reviewRun,
             visualReview: visualReviewRun,
             validation,
+            bypassedConfirmationReview: this.config.bypassConfirmationReviewFollowUp && reviewRun.decision === "needs_follow_up",
             directCommitBranch: this.config.GIT_BASE_BRANCH,
             commitSha
           })
@@ -759,6 +782,7 @@ export class Worker {
             review: reviewRun,
             visualReview: visualReviewRun,
             validation,
+            bypassedConfirmationReview: this.config.bypassConfirmationReviewFollowUp && reviewRun.decision === "needs_follow_up",
             pullRequestUrl: pullRequest.url,
             branchName,
             commitSha
@@ -907,6 +931,7 @@ function buildSuccessJiraComment(input: {
   review: ImplementationReviewResult;
   visualReview: VisualReviewResult;
   validation: NonNullable<WorkerRunResult["validation"]>;
+  bypassedConfirmationReview?: boolean;
   pullRequestUrl?: string;
   branchName?: string;
   directCommitBranch?: string;
@@ -924,7 +949,7 @@ function buildSuccessJiraComment(input: {
       ];
 
   const qualityLines = [
-    `Automated review agents: passed. ${input.review.summary}`,
+    formatImplementationReviewLine(input.review, input.bypassedConfirmationReview ?? false),
     formatVisualReviewLine(input.visualReview),
     ...buildValidationSummaryLines(input.validation)
   ];
@@ -953,6 +978,39 @@ function formatVisualReviewLine(review: VisualReviewResult): string {
   }
 
   return `Visual review: ${review.decision}. ${review.summary}`;
+}
+
+function formatImplementationReviewLine(
+  review: ImplementationReviewResult,
+  bypassedConfirmationReview: boolean
+): string {
+  if (review.decision === "approved") {
+    return `Automated review agents: passed. ${review.summary}`;
+  }
+
+  if (bypassedConfirmationReview && review.decision === "needs_follow_up") {
+    return `Automated review agents: unresolved follow-up findings were bypassed by configuration. ${review.summary}`;
+  }
+
+  return `Automated review agents: ${review.decision}. ${review.summary}`;
+}
+
+function buildBypassedConfirmationReviewComment(review: ImplementationReviewResult): string {
+  const findings =
+    review.findings.length > 0
+      ? review.findings.map((finding) => `- ${finding}`)
+      : ["- Review requested follow-up changes but did not return explicit findings."];
+
+  return [
+    "Automation notice: the confirmation review still found unresolved follow-up items after the automated implementation retry.",
+    "BYPASS_CONFIRMATION_REVIEW_FOLLOW_UP is enabled, so the pipeline is continuing instead of stopping for manual intervention.",
+    "",
+    `Review summary: ${review.summary}`,
+    `Review document: ${review.reviewPath}`,
+    "",
+    "Outstanding findings:",
+    ...findings
+  ].join("\n");
 }
 
 function buildValidationSummaryLines(validation: NonNullable<WorkerRunResult["validation"]>): string[] {

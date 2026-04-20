@@ -22,8 +22,10 @@ export class GitService {
   }> {
     const mirrorPath = path.resolve(this.config.WORK_ROOT, "repo-mirror");
     const worktreeRoot = path.resolve(this.config.WORK_ROOT, "worktrees");
-    const branchName = await this.resolveUniqueBranchName(mirrorPath, ticketKey, summary);
     const repoPath = path.resolve(worktreeRoot, `${ticketKey}-${Date.now()}`);
+
+    await this.ensureMirror(mirrorPath);
+    const branchName = await this.resolveUniqueBranchName(mirrorPath, ticketKey, summary);
 
     this.logger.info("Preparing repository from persistent local mirror", {
       mirrorPath,
@@ -33,7 +35,6 @@ export class GitService {
       baseBranch: this.config.GIT_BASE_BRANCH
     });
 
-    await this.ensureMirror(mirrorPath);
     await fs.mkdir(worktreeRoot, { recursive: true });
     await this.removeExistingBranchWorktree(mirrorPath, branchName);
     await ensureCleanDirectory(repoPath);
@@ -112,10 +113,9 @@ export class GitService {
       baseBranch: this.config.GIT_BASE_BRANCH
     });
 
-    await this.assertRemoteBranchExists(mirrorPath, this.config.GIT_BASE_BRANCH);
-
     const mirrorGit = simpleGit(mirrorPath);
     await mirrorGit.fetch("origin", "--prune");
+    await this.ensureRemoteBaseBranchExists(mirrorPath);
     await mirrorGit.fetch(
       "origin",
       `+refs/heads/${this.config.GIT_BASE_BRANCH}:refs/remotes/origin/${this.config.GIT_BASE_BRANCH}`
@@ -199,15 +199,62 @@ export class GitService {
     );
   }
 
-  private async assertRemoteBranchExists(mirrorPath: string, branchName: string): Promise<void> {
+  private async ensureRemoteBaseBranchExists(mirrorPath: string): Promise<void> {
+    const branchName = this.config.GIT_BASE_BRANCH;
     const remoteBranches = await this.listRemoteBranches(mirrorPath);
     if (remoteBranches.has(branchName)) {
       return;
     }
 
-    throw new Error(
-      `Configured GIT_BASE_BRANCH="${branchName}" does not exist on origin (${this.config.GIT_REMOTE_URL}).`
+    const defaultBranch = await this.resolveRemoteDefaultBranch(mirrorPath);
+    this.logger.warn("Configured base branch is missing on origin; creating it from remote default branch", {
+      baseBranch: branchName,
+      defaultBranch,
+      remote: this.config.GIT_REMOTE_URL
+    });
+
+    await execa(
+      "git",
+      [
+        "push",
+        "origin",
+        `refs/remotes/origin/${defaultBranch}:refs/heads/${branchName}`
+      ],
+      { cwd: mirrorPath }
     );
+
+    const updatedRemoteBranches = await this.listRemoteBranches(mirrorPath);
+    if (!updatedRemoteBranches.has(branchName)) {
+      throw new Error(
+        `Configured GIT_BASE_BRANCH="${branchName}" did not exist on origin (${this.config.GIT_REMOTE_URL}) and automatic creation from "${defaultBranch}" did not succeed.`
+      );
+    }
+  }
+
+  private async resolveRemoteDefaultBranch(mirrorPath: string): Promise<string> {
+    const symrefResult = await execa("git", ["ls-remote", "--symref", "origin", "HEAD"], {
+      cwd: mirrorPath
+    });
+
+    const headLine = symrefResult.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line.startsWith("ref: "));
+
+    if (!headLine) {
+      throw new Error(
+        `Configured GIT_BASE_BRANCH="${this.config.GIT_BASE_BRANCH}" does not exist on origin (${this.config.GIT_REMOTE_URL}), and the remote default branch could not be determined automatically.`
+      );
+    }
+
+    const match = headLine.match(/^ref:\s+refs\/heads\/([^\s]+)\s+HEAD$/);
+    if (!match?.[1]) {
+      throw new Error(
+        `Configured GIT_BASE_BRANCH="${this.config.GIT_BASE_BRANCH}" does not exist on origin (${this.config.GIT_REMOTE_URL}), and the remote HEAD ref format was not recognized.`
+      );
+    }
+
+    return match[1];
   }
 }
 

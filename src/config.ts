@@ -53,6 +53,7 @@ const configSchema = z
     GUARDRAIL_HARD_BLOCKED_KEYWORDS: z.string().trim().optional(),
     GUARDRAIL_SCAN_HUMAN_COMMENTS: z.stringbool().default(false),
     GUARDRAIL_WEAK_REQUIREMENT_THRESHOLD: z.coerce.number().int().positive().default(20),
+    BYPASS_CONFIRMATION_REVIEW_FOLLOW_UP: z.stringbool().default(false),
     VALIDATION_COMMANDS: z.string().trim().optional(),
     VALIDATION_REPAIR_ATTEMPTS: z.coerce.number().int().positive().default(5),
     DRY_RUN_BY_DEFAULT: z.stringbool().default(false),
@@ -107,6 +108,7 @@ export const config = {
     .filter(Boolean),
   hardBlockedKeywords,
   scanHumanCommentsInGuardrails: parsed.data.GUARDRAIL_SCAN_HUMAN_COMMENTS,
+  bypassConfirmationReviewFollowUp: parsed.data.BYPASS_CONFIRMATION_REVIEW_FOLLOW_UP,
   weakRequirementThreshold: parsed.data.GUARDRAIL_WEAK_REQUIREMENT_THRESHOLD
 };
 

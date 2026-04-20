@@ -114,7 +114,7 @@ curl -X POST "http://localhost:3000/run-next?dryRun=true"
 ### Git And Workspace
 
 - `GIT_REMOTE_URL`: Clone URL for the target repository
-- `GIT_BASE_BRANCH`: Base branch to branch from and target in pull requests
+- `GIT_BASE_BRANCH`: Base branch to branch from and target in pull requests; if it does not exist on origin yet, CodePipeline creates it from the remote default branch
 - `GIT_DIRECT_COMMITS`: When `true`, validated changes are committed directly to `GIT_BASE_BRANCH` unless it is `main`
 - `WORK_ROOT`: Root directory where the persistent repo mirror and per-ticket worktrees are created
 
@@ -126,6 +126,7 @@ curl -X POST "http://localhost:3000/run-next?dryRun=true"
 - `GUARDRAIL_HARD_BLOCKED_KEYWORDS`: Optional JSON array or comma/newline-separated list of truly unsafe keywords or phrases; set it blank to disable keyword hard blocks
 - `GUARDRAIL_SCAN_HUMAN_COMMENTS`: When `true`, Jira human comments are included in keyword hard-block scanning
 - `GUARDRAIL_WEAK_REQUIREMENT_THRESHOLD`: Minimum requirement-strength score before a ticket is skipped as underspecified
+- `BYPASS_CONFIRMATION_REVIEW_FOLLOW_UP`: When `true`, a second review that still returns `needs_follow_up` posts a Jira warning comment with the findings and allows the pipeline to continue
 - `VALIDATION_COMMANDS`: Optional JSON array or newline-separated list of validation commands to run inside the target repository
 - `VALIDATION_REPAIR_ATTEMPTS`: Max number of automated repair attempts after validation failures
 - `DRY_RUN_BY_DEFAULT`: When `true`, runs stop before commit/push, PR creation, and Jira mutations unless explicitly overridden
